@@ -6,7 +6,7 @@ Windows 桌面工具：切换 Codex 的 `cch_gz` API 供应商配置，并可调
 
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：应用逻辑与版本号。
 - `work/codex_api_provider_switch/assets/`：应用图标资源。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.0.13.exe`：当前可运行交付版本。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.0.14.exe`：当前可运行交付版本。
 
 ## 最小验证
 
@@ -27,3 +27,5 @@ v1.0.11 修复 Windows AppsFolder 启动标识中的 `!` 被批处理延迟展�
 v1.0.12 将界面名称调整为 `Codex Provider Switch`，两个切换入口分别显示为“打开CCH”和“打开OpenAI”；对应的供应商配置逻辑保持不变。
 
 v1.0.13 将可执行文件打包名称同步为 `Codex Provider Switch`，并同步项目对话标题与桌面快捷方式名称。
+
+v1.0.14 将切换按钮名称更新为“打开Pro 20X”和“打开Plus”；原有的 CCH 默认供应商启用与 OpenAI 默认供应商恢复逻辑不变。

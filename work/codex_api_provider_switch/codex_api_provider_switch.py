@@ -1,4 +1,4 @@
-"""Codex Provider Switch（v1.0.13）。
+"""Codex Provider Switch（v1.0.14）。
 
 只按 TOML 中的语义标识定位 cch_gz 供应商，不使用任何固定行号。
 """
@@ -18,7 +18,7 @@ from tkinter import messagebox, ttk
 
 
 APP_NAME = "Codex Provider Switch"
-APP_VERSION = "1.0.13"
+APP_VERSION = "1.0.14"
 CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 PROVIDER_KEY = "cch_gz"
 THREADRIPPER_NAME = "codex-threadripper"
@@ -327,9 +327,9 @@ class SwitchApp(tk.Tk):
         choices = ttk.Frame(self)
         choices.grid(row=3, column=0, sticky="ew", pady=(16, 12))
         choices.columnconfigure((0, 1), weight=1)
-        self.enable_button = ttk.Button(choices, text="打开CCH", command=lambda: self.confirm_toggle(True))
+        self.enable_button = ttk.Button(choices, text="打开Pro 20X", command=lambda: self.confirm_toggle(True))
         self.enable_button.grid(row=0, column=0, sticky="ew", padx=(0, 6), ipady=7)
-        self.disable_button = ttk.Button(choices, text="打开OpenAI", command=lambda: self.confirm_toggle(False))
+        self.disable_button = ttk.Button(choices, text="打开Plus", command=lambda: self.confirm_toggle(False))
         self.disable_button.grid(row=0, column=1, sticky="ew", padx=(6, 0), ipady=7)
         self.sync_button = ttk.Button(self, text="仅同步历史会话（当前供应商）", command=self.confirm_history_sync)
         self.sync_button.grid(row=4, column=0, sticky="ew", ipady=6)
@@ -398,7 +398,7 @@ class SwitchApp(tk.Tk):
             self.detail_var.set(str(exc))
 
     def confirm_toggle(self, want_enable: bool) -> None:
-        action = "打开 CCH" if want_enable else "打开 OpenAI"
+        action = "打开 Pro 20X" if want_enable else "打开 Plus"
         message = f"确认{action}吗？\n\n将修改 config.toml，并自动重启 Codex。"
         if not want_enable:
             message += "\n\n关闭只取消默认使用；为保证已同步的历史会话可打开，cch_gz 注册配置会保留。"
