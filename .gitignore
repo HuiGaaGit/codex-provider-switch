@@ -1,0 +1,14 @@
+# Windows / Python temporary files
+__pycache__/
+*.py[cod]
+
+# PyInstaller intermediates and machine-specific spec files
+work/codex_api_provider_switch/build/
+work/codex_api_provider_switch/*.spec
+
+# Local packaged releases are retained outside source control
+outputs/
+
+# Local editor settings
+.vscode/
+.idea/
