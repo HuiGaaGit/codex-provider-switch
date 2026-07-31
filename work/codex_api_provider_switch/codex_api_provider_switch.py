@@ -1,4 +1,4 @@
-"""Codex Provider Switch（v1.0.14）。
+"""Codex Provider Switch（v1.0.15）。
 
 只按 TOML 中的语义标识定位 cch_gz 供应商，不使用任何固定行号。
 """
@@ -18,7 +18,7 @@ from tkinter import messagebox, ttk
 
 
 APP_NAME = "Codex Provider Switch"
-APP_VERSION = "1.0.14"
+APP_VERSION = "1.0.15"
 CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 PROVIDER_KEY = "cch_gz"
 THREADRIPPER_NAME = "codex-threadripper"
@@ -327,7 +327,7 @@ class SwitchApp(tk.Tk):
         choices = ttk.Frame(self)
         choices.grid(row=3, column=0, sticky="ew", pady=(16, 12))
         choices.columnconfigure((0, 1), weight=1)
-        self.enable_button = ttk.Button(choices, text="打开Pro 20X", command=lambda: self.confirm_toggle(True))
+        self.enable_button = ttk.Button(choices, text="打开Pro 20x", command=lambda: self.confirm_toggle(True))
         self.enable_button.grid(row=0, column=0, sticky="ew", padx=(0, 6), ipady=7)
         self.disable_button = ttk.Button(choices, text="打开Plus", command=lambda: self.confirm_toggle(False))
         self.disable_button.grid(row=0, column=1, sticky="ew", padx=(6, 0), ipady=7)
@@ -381,10 +381,10 @@ class SwitchApp(tk.Tk):
             text, _ = _read_config()
             status, _, _ = inspect_config(text)
             if status == "enabled":
-                self.status_var.set("当前状态：已启用 CCH API 供应商")
+                self.status_var.set("当前状态：已启用Pro 20x")
                 self.status_label.configure(foreground="#16794c")
             elif status == "disabled":
-                self.status_var.set("当前状态：未默认使用 CCH API（历史会话兼容已保留）")
+                self.status_var.set("当前状态：已启用Plus")
                 self.status_label.configure(foreground="#8a4b00")
             else:
                 self.status_var.set("当前状态：配置不完整，请点击打开或关闭以修复")
@@ -398,7 +398,7 @@ class SwitchApp(tk.Tk):
             self.detail_var.set(str(exc))
 
     def confirm_toggle(self, want_enable: bool) -> None:
-        action = "打开 Pro 20X" if want_enable else "打开 Plus"
+        action = "打开 Pro 20x" if want_enable else "打开 Plus"
         message = f"确认{action}吗？\n\n将修改 config.toml，并自动重启 Codex。"
         if not want_enable:
             message += "\n\n关闭只取消默认使用；为保证已同步的历史会话可打开，cch_gz 注册配置会保留。"

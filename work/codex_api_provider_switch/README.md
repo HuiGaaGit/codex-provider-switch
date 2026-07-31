@@ -1,4 +1,4 @@
-# Codex Provider Switch v1.0.14
+# Codex Provider Switch v1.0.15
 
 此工具专用于切换 `C:\Users\ASUS\.codex\config.toml` 里的 `cch_gz` API 供应商。
 
@@ -21,3 +21,5 @@ v1.0.12 仅更新了界面文字：软件名称为 `Codex Provider Switch`，“
 v1.0.13 将 Windows 可执行文件名也更新为 `Codex Provider Switch-1.0.13.exe`。
 
 v1.0.14 将两个按钮显示为“打开Pro 20X”和“打开Plus”；前者仍启用 CCH 默认供应商，后者仍恢复 OpenAI 默认供应商。
+
+v1.0.15 统一使用“打开Pro 20x”与“打开Plus”，状态栏相应显示“已启用Pro 20x”或“已启用Plus”。
