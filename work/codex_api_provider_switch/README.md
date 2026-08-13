@@ -1,10 +1,8 @@
-# Codex Provider Switch v1.0.15
+# Codex Provider Switch v1.0.16
 
 此工具专用于切换 `C:\Users\ASUS\.codex\config.toml` 里的 `cch_gz` API 供应商。
 
-它用 `model_provider = "cch_gz"` 和 `[model_providers.cch_gz]` 定位配置，不依赖行号。启用时去掉这两项及其供应商配置项前的注释；关闭时恢复注释。操作顺序是先关闭整个 Codex 进程树，再写配置、同步全部历史会话，最后重新启动 Codex；窗口会逐步显示各阶段结果。
-
-`notify`、`service_tier` 不在切换范围中，因为当前配置的相同顶层键已经处于启用状态，重复启用会让 TOML 无法解析。
+它按 `model_provider = "cch_gz"` 和 `[model_providers.cch_gz]` 定位配置，不依赖行号。“打开Pro 20x”将 CCH 设为默认供应商；“打开Plus”仅取消该默认设置，同时保留 CCH 注册以兼容历史会话。`notify` 与 `service_tier` 不会被切换。
 
 界面也提供“仅同步历史会话（当前供应商）”按钮，不改动 API 供应商配置。同步由 `codex-threadripper 0.3.6` 完成；它会自行在 `.codex\\backups` 创建会话状态保护备份。此前取消的是 `config.toml` 的自动备份。
 
@@ -23,3 +21,5 @@ v1.0.13 将 Windows 可执行文件名也更新为 `Codex Provider Switch-1.0.13
 v1.0.14 将两个按钮显示为“打开Pro 20X”和“打开Plus”；前者仍启用 CCH 默认供应商，后者仍恢复 OpenAI 默认供应商。
 
 v1.0.15 统一使用“打开Pro 20x”与“打开Plus”，状态栏相应显示“已启用Pro 20x”或“已启用Plus”。
+
+v1.0.16 修复切换完成后按钮仍被禁用的问题，并将进度提示简化为“正在写入供应商设置”。

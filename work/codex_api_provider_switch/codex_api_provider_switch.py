@@ -1,4 +1,4 @@
-"""Codex Provider Switch（v1.0.15）。
+"""Codex Provider Switch（v1.0.16）。
 
 只按 TOML 中的语义标识定位 cch_gz 供应商，不使用任何固定行号。
 """
@@ -18,7 +18,7 @@ from tkinter import messagebox, ttk
 
 
 APP_NAME = "Codex Provider Switch"
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.0.16"
 CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 PROVIDER_KEY = "cch_gz"
 THREADRIPPER_NAME = "codex-threadripper"
@@ -374,6 +374,9 @@ class SwitchApp(tk.Tk):
 
     def refresh(self) -> None:
         try:
+            # 操作完成后恢复两个供应商入口；配置异常时才统一禁用。
+            self.enable_button.configure(state="normal")
+            self.disable_button.configure(state="normal")
             self.sync_button.configure(state="normal" if _threadripper_command() else "disabled")
             self.history_var.set(
                 "历史会话同步：codex-threadripper 已就绪" if _threadripper_command() else "历史会话同步：未找到 codex-threadripper"
@@ -413,7 +416,7 @@ class SwitchApp(tk.Tk):
             restart_target = locate_restart_target()
             stop_summary = run_restart_helper("--stop-only")
             self._publish("stage", f"1/4 Codex 已完全关闭：{stop_summary}")
-            self._publish("stage", "2/4 正在写入供应商配置（仅允许的 7 行）…")
+            self._publish("stage", "2/4 正在写入供应商设置…")
             state = update_config(want_enable)
             self._publish("stage", f"2/4 配置写入完成：供应商已{'启用' if state == 'enabled' else '关闭'}。")
             self._sync_and_start(restart_target)
@@ -454,6 +457,9 @@ class SwitchApp(tk.Tk):
 
     def _done(self, detail: str) -> None:
         self.detail_var.set(detail)
+        self.enable_button.configure(state="normal")
+        self.disable_button.configure(state="normal")
+        self.sync_button.configure(state="normal" if _threadripper_command() else "disabled")
         self.refresh()
         messagebox.showinfo(APP_NAME, "操作完成，Codex 已重新启动。")
 
