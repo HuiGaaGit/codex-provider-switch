@@ -64,6 +64,7 @@ exit /b 0
 
 :StartApp
 echo [INFO] Launching Codex through Windows AppsFolder...
+call :CollectChatGptBaseline
 setlocal DisableDelayedExpansion
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$target = 'shell:AppsFolder\' + $env:PACKAGE_FAMILY + '!' + $env:APP_ID; Start-Process explorer.exe -ArgumentList $target"
 set "LAUNCH_EXIT=%ERRORLEVEL%"
@@ -73,9 +74,10 @@ if not "%LAUNCH_EXIT%"=="0" (
   exit /b 1
 )
 call :WaitForStart || (
-  echo [ERROR] Codex did not start within 25 seconds.
+  echo [ERROR] Codex did not start within 60 seconds.
   exit /b 1
 )
+echo [INFO] Codex process detected.
 exit /b 0
 
 :ResolvePackage
@@ -107,9 +109,14 @@ for /l %%S in (1,1,50) do (
 exit /b 1
 
 :WaitForStart
-for /l %%S in (1,1,50) do (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$root = $env:PACKAGE_ROOT; if (@(Get-Process -Name ChatGPT -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) { exit 0 } else { exit 1 }" >nul 2>&1
+for /l %%S in (1,1,60) do (
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$root = $env:PACKAGE_ROOT; $baseline = @($env:BASELINE_CHATGPT_PIDS -split ',' | Where-Object { $_ } | ForEach-Object { [int]$_ }); $processes = @(Get-Process -Name ChatGPT -ErrorAction SilentlyContinue); $packageMatch = @($processes | Where-Object { $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0; $newProcess = @($processes | Where-Object { $baseline -notcontains $_.Id }).Count -gt 0; if ($packageMatch -or $newProcess) { exit 0 } else { exit 1 }" >nul 2>&1
   if not errorlevel 1 exit /b 0
   timeout /t 1 /nobreak >nul
 )
 exit /b 1
+
+:CollectChatGptBaseline
+set "BASELINE_CHATGPT_PIDS="
+for /f "usebackq delims=" %%P in (`powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "@(Get-Process -Name ChatGPT -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id -Unique)"`) do set "BASELINE_CHATGPT_PIDS=!BASELINE_CHATGPT_PIDS!,%%P"
+exit /b 0

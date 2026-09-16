@@ -6,7 +6,7 @@ Windows 桌面工具：切换 Codex 的 `cch_gz` API 供应商配置，并可调
 
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：应用逻辑与版本号。
 - `work/codex_api_provider_switch/assets/`：应用图标资源。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.0.16.exe`：当前可运行交付版本。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.0.23.exe`：当前可运行交付版本。
 
 ## 最小验证
 
@@ -33,3 +33,17 @@ v1.0.14 将切换按钮名称更新为“打开Pro 20X”和“打开Plus”；�
 v1.0.15 将按钮名称统一为“打开Pro 20x”和“打开Plus”，并将当前状态显示为“已启用Pro 20x”或“已启用Plus”。
 
 v1.0.16 修复切换完成后按钮未恢复可点击的问题，并将供应商写入提示改为简洁描述。
+
+v1.0.17 修复 Codex 已收到 Windows AppsFolder 启动请求、但因进程路径暂时不可读而被误报为启动超时的问题。重启助手会同时校验安装路径和启动后新增的 ChatGPT 进程，并将等待上限与提示统一为 60 秒。
+
+v1.0.18 新增“设置”入口，可自定义两个供应商切换按钮的显示名称。名称保存在 `.codex\\codex_provider_switch_labels.json`，仅影响界面文字，不改变原有切换功能。
+
+v1.0.19 让当前状态随自定义按钮名称同步变化；按钮名称以“打开”“启用”“切换到”或“切换至”开头时，状态栏会去掉动作前缀后显示“已启用…”名称。
+
+v1.0.20 在设置中增加 API 1（Pro 20x）和 API 2（Pro 5x）Key 的录入与保存；Pro 5x 按钮增加 OPENAI/API 5x 下拉选项。选择 API 5x 时启用 cch_gz 并写入 API 2 Key，选择 OPENAI 时恢复 OpenAI 默认供应商。
+
+v1.0.21 优化浅色半透明 UI：启用 Windows Acrylic/Mica 背景回退、浅蓝白玻璃卡片、高光描边、状态呼吸光点和背景柔和光晕；切换逻辑保持不变。
+
+v1.0.22 根据视觉反馈进一步降低边界感：移除玻璃卡片硬描边和按钮焦点框，改用同色系低对比层次与留白，让文字、按钮和浅色背景更自然地融合。
+
+v1.0.23 应用户要求恢复到毛玻璃改动前的原生 Tk/ttk UI 风格；API Key、OPENAI/API 5x 下拉及状态联动功能保留。

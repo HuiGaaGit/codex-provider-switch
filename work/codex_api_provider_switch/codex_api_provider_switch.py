@@ -1,4 +1,4 @@
-"""Codex Provider Switch（v1.0.16）。
+"""Codex Provider Switch（v1.0.23）。
 
 只按 TOML 中的语义标识定位 cch_gz 供应商，不使用任何固定行号。
 """
@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import os
+import json
+import ctypes
+import math
 import re
 import shutil
 import subprocess
@@ -18,20 +21,124 @@ from tkinter import messagebox, ttk
 
 
 APP_NAME = "Codex Provider Switch"
-APP_VERSION = "1.0.16"
+APP_VERSION = "1.0.23"
 CONFIG_PATH = Path.home() / ".codex" / "config.toml"
+LABELS_PATH = Path.home() / ".codex" / "codex_provider_switch_labels.json"
 PROVIDER_KEY = "cch_gz"
 THREADRIPPER_NAME = "codex-threadripper"
 RESTART_HELPER_NAME = "restart-codex-app.bat"
 RESTART_HELPER_TIMEOUT_SECONDS = 70
 CODEX_PACKAGE_PREFIX = "OpenAI.Codex_"
 CODEX_APP_EXECUTABLE = "ChatGPT.exe"
+DEFAULT_BUTTON_LABELS = {
+    "enable": "打开Pro 20x",
+    "disable": "打开Plus",
+}
+DEFAULT_API_KEYS = {
+    "api1": "",
+    "api2": "",
+}
+PRO5X_CHOICES = ("OPENAI", "API 5x")
+UI_COLORS = {
+    "background": "#edf7fb",
+    "background_alt": "#f7fcfe",
+    "glass": "#f5fbfd",
+    "glass_alt": "#eaf5f9",
+    "border": "#e3f0f4",
+    "text": "#29475b",
+    "muted": "#718a9b",
+    "accent": "#73bdcf",
+    "accent_deep": "#cbe8ef",
+    "success": "#168b70",
+    "warning": "#ae6a15",
+    "danger": "#bd4b62",
+}
 
 
 def resource_path(relative_path: str) -> Path:
     """兼容直接运行源码与 PyInstaller 单文件运行时的内置资源路径。"""
     base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base_path / relative_path
+
+
+def enable_windows_glass(window: tk.Tk | tk.Toplevel) -> None:
+    """在 Windows 11 上启用系统 Acrylic 背景；其他环境使用深色玻璃回退样式。"""
+    if sys.platform != "win32":
+        return
+    try:
+        window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
+        dwmapi = ctypes.windll.dwmapi
+        dark_mode = ctypes.c_int(0)
+        backdrop = ctypes.c_int(3)  # DWMSBT_TRANSIENTWINDOW：Acrylic/Transient backdrop
+        dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
+        dwmapi.DwmSetWindowAttribute(hwnd, 38, ctypes.byref(backdrop), ctypes.sizeof(backdrop))
+    except (AttributeError, OSError):
+        pass
+
+
+def load_app_settings() -> tuple[dict[str, str], dict[str, str]]:
+    """读取按钮名称和 API Key；旧版设置文件仍可直接继续使用。"""
+    labels = DEFAULT_BUTTON_LABELS.copy()
+    api_keys = DEFAULT_API_KEYS.copy()
+    try:
+        payload = json.loads(LABELS_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, UnicodeError, json.JSONDecodeError):
+        return labels, api_keys
+    if not isinstance(payload, dict):
+        return labels, api_keys
+    for key in labels:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            labels[key] = value.strip()[:40]
+    for key in api_keys:
+        value = payload.get(key)
+        if isinstance(value, str):
+            api_keys[key] = value.strip()[:500]
+    return labels, api_keys
+
+
+def load_button_labels() -> dict[str, str]:
+    """读取可自定义的按钮名称；保留旧版调用入口。"""
+    labels, _ = load_app_settings()
+    return labels
+
+
+def save_app_settings(labels: dict[str, str], api_keys: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    """原子写入按钮名称和 API Key。"""
+    normalized_labels = {
+        key: str(labels.get(key, DEFAULT_BUTTON_LABELS[key])).strip()[:40]
+        for key in DEFAULT_BUTTON_LABELS
+    }
+    normalized_keys = {
+        key: str(api_keys.get(key, "")).strip()[:500]
+        for key in DEFAULT_API_KEYS
+    }
+    if not all(normalized_labels.values()):
+        raise ValueError("两个按钮名称都不能为空。")
+    LABELS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = LABELS_PATH.with_name(f"{LABELS_PATH.name}.tmp")
+    temporary.write_text(
+        json.dumps({**normalized_labels, **normalized_keys}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, LABELS_PATH)
+    return normalized_labels, normalized_keys
+
+
+def save_button_labels(labels: dict[str, str]) -> dict[str, str]:
+    """原子写入按钮名称；保留旧版调用入口。"""
+    normalized, _ = save_app_settings(labels, load_app_settings()[1])
+    return normalized
+
+
+def status_name_from_button_label(label: str) -> str:
+    """从按钮动作名称取得状态栏使用的供应商显示名。"""
+    name = label.strip()
+    for prefix in ("切换到", "切换至", "打开", "启用"):
+        if name.startswith(prefix) and len(name) > len(prefix):
+            return name[len(prefix):].strip()
+    return name
 
 MODEL_PROVIDER_RE = re.compile(
     rf"^(?P<indent>\s*)(?P<comment>#\s*)?model_provider\s*=\s*['\"]{PROVIDER_KEY}['\"](?P<tail>.*)$"
@@ -42,6 +149,7 @@ PROVIDER_TABLE_RE = re.compile(
 PROVIDER_SETTING_RE = re.compile(
     r"^\s*(?:name|base_url|wire_api|requires_openai_auth|experimental_bearer_token)\s*="
 )
+BEARER_TOKEN_SETTING_RE = re.compile(r"^(?P<prefix>\s*experimental_bearer_token\s*=\s*)(?P<quote>['\"])(?P<value>.*?)(?P=quote)(?P<tail>\s*(?:#.*)?)$")
 PROVIDER_SETTING_NAMES = (
     "name",
     "base_url",
@@ -135,6 +243,26 @@ def inspect_config(text: str) -> tuple[str, int, int]:
 
 def transform_config(text: str, enable: bool) -> str:
     """切换默认供应商；始终保留 cch_gz 注册，确保历史会话能够重新加载。"""
+    return _transform_config_with_token(text, enable, None)
+
+
+def _replace_bearer_token_line(line: str, bearer_token: str) -> str:
+    ending = ""
+    if line.endswith("\r\n"):
+        ending, body = "\r\n", line[:-2]
+    elif line.endswith("\n"):
+        ending, body = "\n", line[:-1]
+    else:
+        body = line
+    body = _uncomment(body)
+    match = BEARER_TOKEN_SETTING_RE.match(body)
+    if not match:
+        raise ConfigError("experimental_bearer_token 配置格式无法识别。")
+    return f"{match.group('prefix')}{json.dumps(bearer_token, ensure_ascii=False)}{match.group('tail')}{ending}"
+
+
+def _transform_config_with_token(text: str, enable: bool, bearer_token: str | None) -> str:
+    """切换默认供应商，并可安全替换 cch_gz 的 Bearer Token。"""
     lines = text.splitlines(keepends=True)
     _, model_index, table_index = inspect_config(text)
     setting_indexes = _provider_block_assignment_indexes(lines, table_index)
@@ -145,6 +273,8 @@ def transform_config(text: str, enable: bool) -> str:
     lines[table_index] = _uncomment(lines[table_index])
     for index in setting_indexes:
         lines[index] = _uncomment(lines[index])
+        if bearer_token is not None and BEARER_TOKEN_SETTING_RE.match(lines[index].rstrip("\r\n")):
+            lines[index] = _replace_bearer_token_line(lines[index], bearer_token)
     return "".join(_move_global_settings_before_provider(lines, table_index))
 
 
@@ -184,14 +314,23 @@ def _validate_global_settings(text: str) -> None:
                 raise ConfigError(f"{name} 被错误放入 {PROVIDER_KEY} 段，必须恢复为顶层设置。")
 
 
-def update_config(enable: bool) -> str:
+def current_bearer_token(text: str) -> str:
+    """读取当前 cch_gz Bearer Token，用于识别 Pro 20x/API 5x 状态。"""
+    import tomllib
+
+    provider = tomllib.loads(text).get("model_providers", {}).get(PROVIDER_KEY, {})
+    token = provider.get("experimental_bearer_token", "") if isinstance(provider, dict) else ""
+    return token if isinstance(token, str) else ""
+
+
+def update_config(enable: bool, bearer_token: str | None = None) -> str:
     """安全写入配置并返回切换后的状态。"""
     if not CONFIG_PATH.exists():
         raise ConfigError(f"未找到配置文件：{CONFIG_PATH}")
     original, encoding = _read_config()
     current, _, _ = inspect_config(original)
     desired = "enabled" if enable else "disabled"
-    updated = transform_config(original, enable)
+    updated = _transform_config_with_token(original, enable, bearer_token)
     if updated == original:
         return current
     _validate_toml(updated)
@@ -316,21 +455,39 @@ class SwitchApp(tk.Tk):
         self.history_var = tk.StringVar()
         self.detail_var = tk.StringVar(value=f"配置文件：{CONFIG_PATH}")
         self.event_queue: Queue[tuple[str, str]] = Queue()
+        self.button_labels, self.api_keys = load_app_settings()
+        self.pro5x_choice_var = tk.StringVar(value="OPENAI")
 
         ttk.Style(self).configure("Title.TLabel", font=("Microsoft YaHei UI", 16, "bold"))
         ttk.Style(self).configure("Status.TLabel", font=("Microsoft YaHei UI", 11, "bold"))
         ttk.Style(self).configure("Note.TLabel", foreground="#5d6470")
-        ttk.Label(self, text=APP_NAME, style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        header = ttk.Frame(self)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text=APP_NAME, style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        self.settings_button = ttk.Button(header, text="设置", command=self.open_settings, width=7)
+        self.settings_button.grid(row=0, column=1, sticky="e", padx=(12, 0))
         ttk.Label(self, text=f"v{APP_VERSION} · 供应商切换与历史会话同步", style="Note.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 18))
         self.status_label = ttk.Label(self, textvariable=self.status_var, style="Status.TLabel")
         self.status_label.grid(row=2, column=0, sticky="w")
         choices = ttk.Frame(self)
         choices.grid(row=3, column=0, sticky="ew", pady=(16, 12))
         choices.columnconfigure((0, 1), weight=1)
-        self.enable_button = ttk.Button(choices, text="打开Pro 20x", command=lambda: self.confirm_toggle(True))
+        self.enable_button = ttk.Button(choices, text=self.button_labels["enable"], command=self.confirm_api1)
         self.enable_button.grid(row=0, column=0, sticky="ew", padx=(0, 6), ipady=7)
-        self.disable_button = ttk.Button(choices, text="打开Plus", command=lambda: self.confirm_toggle(False))
-        self.disable_button.grid(row=0, column=1, sticky="ew", padx=(6, 0), ipady=7)
+        pro5x_frame = ttk.Frame(choices)
+        pro5x_frame.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        pro5x_frame.columnconfigure(0, weight=1)
+        self.disable_button = ttk.Button(pro5x_frame, text=self.button_labels["disable"], command=self.confirm_pro5x)
+        self.disable_button.grid(row=0, column=0, sticky="ew", ipady=7)
+        self.pro5x_choice = ttk.Combobox(
+            pro5x_frame,
+            textvariable=self.pro5x_choice_var,
+            values=PRO5X_CHOICES,
+            state="readonly",
+            width=9,
+        )
+        self.pro5x_choice.grid(row=0, column=1, sticky="ns", padx=(4, 0))
         self.sync_button = ttk.Button(self, text="仅同步历史会话（当前供应商）", command=self.confirm_history_sync)
         self.sync_button.grid(row=4, column=0, sticky="ew", ipady=6)
         ttk.Label(self, text="操作进度", style="Note.TLabel").grid(row=5, column=0, sticky="w", pady=(12, 3))
@@ -342,6 +499,238 @@ class SwitchApp(tk.Tk):
         ttk.Label(self, text="关闭只取消默认使用，不注销 cch_gz，确保历史会话可打开。会话同步由 Threadripper 在 .codex\\backups 中自行创建保护备份。", style="Note.TLabel", wraplength=440).grid(row=9, column=0, sticky="w", pady=(14, 0))
         self.refresh()
         self.after(100, self._drain_events)
+
+    def _setup_visual_style(self) -> None:
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("Root.TFrame", background=UI_COLORS["background"])
+        style.configure("Dialog.TFrame", background=UI_COLORS["background"])
+        style.configure(
+            "Glass.TFrame",
+            background=UI_COLORS["glass"],
+            bordercolor=UI_COLORS["border"],
+            relief="flat",
+            borderwidth=0,
+        )
+        style.configure(
+            "Title.TLabel",
+            background=UI_COLORS["background"],
+            foreground=UI_COLORS["text"],
+            font=("Microsoft YaHei UI", 16, "bold"),
+        )
+        style.configure(
+            "Status.TLabel",
+            background=UI_COLORS["glass"],
+            foreground=UI_COLORS["text"],
+            font=("Microsoft YaHei UI", 11, "bold"),
+        )
+        style.configure(
+            "Note.TLabel",
+            background=UI_COLORS["background"],
+            foreground=UI_COLORS["muted"],
+            font=("Microsoft YaHei UI", 9),
+        )
+        style.configure(
+            "DialogTitle.TLabel",
+            background=UI_COLORS["background"],
+            foreground=UI_COLORS["text"],
+            font=("Microsoft YaHei UI", 12, "bold"),
+        )
+        style.configure(
+            "Dialog.TLabel",
+            background=UI_COLORS["background"],
+            foreground=UI_COLORS["text"],
+            font=("Microsoft YaHei UI", 9),
+        )
+        style.configure(
+            "DialogNote.TLabel",
+            background=UI_COLORS["background"],
+            foreground=UI_COLORS["muted"],
+            font=("Microsoft YaHei UI", 9),
+        )
+        style.configure(
+            "Glass.TEntry",
+            fieldbackground=UI_COLORS["background_alt"],
+            foreground=UI_COLORS["text"],
+            insertcolor=UI_COLORS["accent"],
+            bordercolor=UI_COLORS["glass_alt"],
+            lightcolor=UI_COLORS["glass_alt"],
+            darkcolor=UI_COLORS["glass_alt"],
+        )
+        style.configure(
+            "TCombobox",
+            fieldbackground=UI_COLORS["background_alt"],
+            background=UI_COLORS["glass_alt"],
+            foreground=UI_COLORS["text"],
+            arrowcolor=UI_COLORS["accent"],
+            bordercolor=UI_COLORS["glass_alt"],
+            lightcolor=UI_COLORS["glass_alt"],
+            darkcolor=UI_COLORS["glass_alt"],
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", UI_COLORS["background_alt"])],
+            foreground=[("readonly", UI_COLORS["text"])],
+            selectbackground=[("readonly", UI_COLORS["accent_deep"])],
+            selectforeground=[("readonly", UI_COLORS["text"])],
+        )
+
+    def _make_button(
+        self,
+        parent: tk.Misc,
+        text: str,
+        command,
+        *,
+        secondary: bool = False,
+        compact: bool = False,
+    ) -> tk.Button:
+        background = UI_COLORS["glass_alt"] if secondary or compact else UI_COLORS["accent_deep"]
+        active = "#d9eff4" if secondary or compact else "#b9dfe8"
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            bg=background,
+            fg=UI_COLORS["text"],
+            activebackground=active,
+            activeforeground=UI_COLORS["text"],
+            disabledforeground="#a5bac5",
+            font=("Microsoft YaHei UI", 10, "bold" if not compact else "normal"),
+            cursor="hand2",
+            padx=10 if compact else 12,
+            pady=4 if compact else 6,
+        )
+
+    def _draw_glass_background(self) -> None:
+        self.glass_canvas.delete("all")
+        self.glass_canvas.create_rectangle(
+            0,
+            0,
+            1000,
+            1000,
+            fill=UI_COLORS["background"],
+            outline="",
+            tags="base",
+        )
+        self._glow_left = self.glass_canvas.create_oval(
+            -150,
+            220,
+            180,
+            550,
+            fill=UI_COLORS["background_alt"],
+            outline=UI_COLORS["accent_deep"],
+            width=2,
+            tags="glow_left",
+        )
+        self._glow_right = self.glass_canvas.create_oval(
+            280,
+            -180,
+            650,
+            190,
+            fill=UI_COLORS["background_alt"],
+            outline=UI_COLORS["border"],
+            width=2,
+            tags="glow_right",
+        )
+
+    @staticmethod
+    def _mix_color(first: str, second: str, ratio: float) -> str:
+        ratio = max(0.0, min(1.0, ratio))
+        first_rgb = tuple(int(first[index : index + 2], 16) for index in (1, 3, 5))
+        second_rgb = tuple(int(second[index : index + 2], 16) for index in (1, 3, 5))
+        mixed = tuple(round(a + (b - a) * ratio) for a, b in zip(first_rgb, second_rgb))
+        return "#%02x%02x%02x" % mixed
+
+    def _animate_visuals(self) -> None:
+        self._pulse_phase = (self._pulse_phase + 0.08) % (math.pi * 2)
+        intensity = (math.sin(self._pulse_phase) + 1) / 2
+        glow = self._mix_color(UI_COLORS["accent_deep"], UI_COLORS["accent"], intensity * 0.42)
+        soft_glow = self._mix_color(UI_COLORS["border"], UI_COLORS["accent"], intensity * 0.28)
+        if hasattr(self, "_glow_left"):
+            self.glass_canvas.itemconfigure(self._glow_left, outline=glow)
+            self.glass_canvas.itemconfigure(self._glow_right, outline=soft_glow)
+        if hasattr(self, "_status_dot"):
+            status_color = self._mix_color(UI_COLORS["accent_deep"], UI_COLORS["accent"], 0.35 + intensity * 0.45)
+            self.status_indicator.itemconfigure(self._status_dot, fill=status_color)
+        self.after(80, self._animate_visuals)
+
+    def apply_settings(self, labels: dict[str, str], api_keys: dict[str, str]) -> None:
+        self.button_labels = labels.copy()
+        self.api_keys = api_keys.copy()
+        self.enable_button.configure(text=self.button_labels["enable"])
+        self.disable_button.configure(text=self.button_labels["disable"])
+        self.refresh()
+
+    def apply_button_labels(self, labels: dict[str, str]) -> None:
+        """保留旧版调用入口。"""
+        self.apply_settings(labels, self.api_keys)
+
+    def open_settings(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("设置")
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.configure(padx=20, pady=18)
+        dialog.grab_set()
+        dialog.columnconfigure(1, weight=1)
+        ttk.Label(dialog, text="供应商与 API 设置", font=("Microsoft YaHei UI", 12, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w"
+        )
+        ttk.Label(
+            dialog,
+            text="按钮名称仅影响显示；API Key 会写入对应的 experimental_bearer_token。",
+            style="Note.TLabel",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 14))
+        enable_var = tk.StringVar(value=self.button_labels["enable"])
+        disable_var = tk.StringVar(value=self.button_labels["disable"])
+        api1_var = tk.StringVar(value=self.api_keys["api1"])
+        api2_var = tk.StringVar(value=self.api_keys["api2"])
+        ttk.Label(dialog, text="启用 CCH 按钮").grid(row=2, column=0, sticky="w", pady=5, padx=(0, 12))
+        enable_entry = ttk.Entry(dialog, textvariable=enable_var, width=28)
+        enable_entry.grid(row=2, column=1, sticky="ew", pady=5)
+        ttk.Label(dialog, text="Pro 5x / OpenAI 按钮").grid(row=3, column=0, sticky="w", pady=5, padx=(0, 12))
+        disable_entry = ttk.Entry(dialog, textvariable=disable_var, width=28)
+        disable_entry.grid(row=3, column=1, sticky="ew", pady=5)
+        ttk.Label(dialog, text="API 1（Pro 20x Key）").grid(row=4, column=0, sticky="w", pady=5, padx=(0, 12))
+        api1_entry = ttk.Entry(dialog, textvariable=api1_var, width=28, show="*")
+        api1_entry.grid(row=4, column=1, sticky="ew", pady=5)
+        ttk.Label(dialog, text="API 2（Pro 5x Key）").grid(row=5, column=0, sticky="w", pady=5, padx=(0, 12))
+        api2_entry = ttk.Entry(dialog, textvariable=api2_var, width=28, show="*")
+        api2_entry.grid(row=5, column=1, sticky="ew", pady=5)
+
+        actions = ttk.Frame(dialog)
+        actions.grid(row=6, column=0, columnspan=2, sticky="e", pady=(16, 0))
+
+        def reset() -> None:
+            enable_var.set(DEFAULT_BUTTON_LABELS["enable"])
+            disable_var.set(DEFAULT_BUTTON_LABELS["disable"])
+            api1_var.set("")
+            api2_var.set("")
+            enable_entry.focus_set()
+
+        def save() -> None:
+            labels = {"enable": enable_var.get().strip(), "disable": disable_var.get().strip()}
+            api_keys = {"api1": api1_var.get().strip(), "api2": api2_var.get().strip()}
+            try:
+                labels, api_keys = save_app_settings(labels, api_keys)
+            except (OSError, ValueError) as exc:
+                messagebox.showerror(APP_NAME, f"保存设置失败：\n{exc}", parent=dialog)
+                return
+            self.apply_settings(labels, api_keys)
+            dialog.destroy()
+
+        ttk.Button(actions, text="恢复默认", command=reset).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="取消", command=dialog.destroy).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="保存", command=save).pack(side="left")
+        enable_entry.focus_set()
+        dialog.bind("<Return>", lambda _event: save())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
 
     def _append_progress(self, message: str) -> None:
         self.progress_text.configure(state="normal")
@@ -377,6 +766,8 @@ class SwitchApp(tk.Tk):
             # 操作完成后恢复两个供应商入口；配置异常时才统一禁用。
             self.enable_button.configure(state="normal")
             self.disable_button.configure(state="normal")
+            self.settings_button.configure(state="normal")
+            self.pro5x_choice.configure(state="readonly")
             self.sync_button.configure(state="normal" if _threadripper_command() else "disabled")
             self.history_var.set(
                 "历史会话同步：codex-threadripper 已就绪" if _threadripper_command() else "历史会话同步：未找到 codex-threadripper"
@@ -384,10 +775,18 @@ class SwitchApp(tk.Tk):
             text, _ = _read_config()
             status, _, _ = inspect_config(text)
             if status == "enabled":
-                self.status_var.set("当前状态：已启用Pro 20x")
+                token = current_bearer_token(text)
+                if self.api_keys["api2"] and token == self.api_keys["api2"]:
+                    self.pro5x_choice_var.set("API 5x")
+                    name = status_name_from_button_label(self.button_labels["disable"])
+                else:
+                    self.pro5x_choice_var.set("OPENAI")
+                    name = status_name_from_button_label(self.button_labels["enable"])
+                self.status_var.set(f"当前状态：已启用{name}")
                 self.status_label.configure(foreground="#16794c")
             elif status == "disabled":
-                self.status_var.set("当前状态：已启用Plus")
+                self.pro5x_choice_var.set("OPENAI")
+                self.status_var.set("当前状态：已启用OPENAI")
                 self.status_label.configure(foreground="#8a4b00")
             else:
                 self.status_var.set("当前状态：配置不完整，请点击打开或关闭以修复")
@@ -397,27 +796,44 @@ class SwitchApp(tk.Tk):
             self.status_label.configure(foreground="#a33131")
             self.enable_button.configure(state="disabled")
             self.disable_button.configure(state="disabled")
+            self.pro5x_choice.configure(state="disabled")
             self.sync_button.configure(state="disabled")
             self.detail_var.set(str(exc))
 
-    def confirm_toggle(self, want_enable: bool) -> None:
-        action = "打开 Pro 20x" if want_enable else "打开 Plus"
+    def confirm_api1(self) -> None:
+        if not self.api_keys["api1"]:
+            messagebox.showwarning(APP_NAME, "尚未设置 API 1（Pro 20x Key），请先打开设置录入。")
+            return
+        self.confirm_toggle(True, self.api_keys["api1"], self.button_labels["enable"])
+
+    def confirm_pro5x(self) -> None:
+        choice = self.pro5x_choice_var.get()
+        if choice == "API 5x":
+            if not self.api_keys["api2"]:
+                messagebox.showwarning(APP_NAME, "尚未设置 API 2（Pro 5x Key），请先打开设置录入。")
+                return
+            self.confirm_toggle(True, self.api_keys["api2"], f"{self.button_labels['disable']}（API 5x）")
+            return
+        self.confirm_toggle(False, None, f"{self.button_labels['disable']}（OPENAI）")
+
+    def confirm_toggle(self, want_enable: bool, bearer_token: str | None = None, action: str | None = None) -> None:
+        action = action or (self.button_labels["enable"] if want_enable else self.button_labels["disable"])
         message = f"确认{action}吗？\n\n将修改 config.toml，并自动重启 Codex。"
         if not want_enable:
             message += "\n\n关闭只取消默认使用；为保证已同步的历史会话可打开，cch_gz 注册配置会保留。"
         if not messagebox.askyesno(APP_NAME, message):
             return
         self._start_operation(f"准备{action}…")
-        threading.Thread(target=self._apply, args=(want_enable,), daemon=True).start()
+        threading.Thread(target=self._apply, args=(want_enable, bearer_token), daemon=True).start()
 
-    def _apply(self, want_enable: bool) -> None:
+    def _apply(self, want_enable: bool, bearer_token: str | None) -> None:
         try:
             self._publish("stage", "1/4 正在关闭 Codex（独立重启助手）…")
             restart_target = locate_restart_target()
             stop_summary = run_restart_helper("--stop-only")
             self._publish("stage", f"1/4 Codex 已完全关闭：{stop_summary}")
             self._publish("stage", "2/4 正在写入供应商设置…")
-            state = update_config(want_enable)
+            state = update_config(want_enable, bearer_token)
             self._publish("stage", f"2/4 配置写入完成：供应商已{'启用' if state == 'enabled' else '关闭'}。")
             self._sync_and_start(restart_target)
         except Exception as exc:
@@ -450,6 +866,8 @@ class SwitchApp(tk.Tk):
     def _start_operation(self, initial_status: str) -> None:
         self.enable_button.configure(state="disabled")
         self.disable_button.configure(state="disabled")
+        self.settings_button.configure(state="disabled")
+        self.pro5x_choice.configure(state="disabled")
         self.sync_button.configure(state="disabled")
         self._clear_progress()
         self.status_var.set(initial_status)
@@ -459,6 +877,8 @@ class SwitchApp(tk.Tk):
         self.detail_var.set(detail)
         self.enable_button.configure(state="normal")
         self.disable_button.configure(state="normal")
+        self.settings_button.configure(state="normal")
+        self.pro5x_choice.configure(state="readonly")
         self.sync_button.configure(state="normal" if _threadripper_command() else "disabled")
         self.refresh()
         messagebox.showinfo(APP_NAME, "操作完成，Codex 已重新启动。")
@@ -468,6 +888,8 @@ class SwitchApp(tk.Tk):
         self.detail_var.set(detail)
         self.enable_button.configure(state="normal")
         self.disable_button.configure(state="normal")
+        self.settings_button.configure(state="normal")
+        self.pro5x_choice.configure(state="readonly")
         self.sync_button.configure(state="normal" if _threadripper_command() else "disabled")
         self.refresh()
         messagebox.showerror(APP_NAME, f"未能完成切换：\n{detail}")

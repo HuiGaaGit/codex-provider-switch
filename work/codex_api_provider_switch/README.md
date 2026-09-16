@@ -1,4 +1,4 @@
-# Codex Provider Switch v1.0.16
+# Codex Provider Switch v1.0.23
 
 此工具专用于切换 `C:\Users\ASUS\.codex\config.toml` 里的 `cch_gz` API 供应商。
 
@@ -23,3 +23,17 @@ v1.0.14 将两个按钮显示为“打开Pro 20X”和“打开Plus”；前者�
 v1.0.15 统一使用“打开Pro 20x”与“打开Plus”，状态栏相应显示“已启用Pro 20x”或“已启用Plus”。
 
 v1.0.16 修复切换完成后按钮仍被禁用的问题，并将进度提示简化为“正在写入供应商设置”。
+
+v1.0.17 修复 WindowsApps 进程路径暂时不可读时的启动误判：启动前记录已有 ChatGPT 进程，启动后以“包路径匹配或出现新增进程”作为成功条件，并统一等待 60 秒。
+
+v1.0.18 新增标题栏“设置”入口，可分别自定义两个供应商按钮的显示名称。自定义内容保存在 `.codex\\codex_provider_switch_labels.json`，仅改变界面文字，按钮仍执行原来的启用/恢复逻辑。
+
+v1.0.19 当前状态文字会同步采用对应按钮的自定义名称；“打开”“启用”“切换到”“切换至”等动作前缀会在状态栏中自动省略。
+
+v1.0.20 设置窗口新增 API 1（Pro 20x Key）和 API 2（Pro 5x Key）密码框。Pro 5x 入口右侧下拉可选 OPENAI 或 API 5x：OPENAI 保持原来的 OpenAI 默认供应商逻辑，API 5x 启用 cch_gz 并写入 API 2 的 `experimental_bearer_token`。
+
+v1.0.21 将界面更新为浅色半透明玻璃风格：Windows 11 使用 Acrylic/Mica 背景，非 Windows 11 使用浅色玻璃回退样式；状态指示点和背景光晕会缓慢呼吸变化。
+
+v1.0.22 移除玻璃卡片硬描边和按钮焦点框，降低控件与底色的对比，使用更柔和的同色系层次和留白。
+
+v1.0.23 恢复到毛玻璃改动前的原生 Tk/ttk UI 风格；API Key、OPENAI/API 5x 下拉及状态联动功能继续保留。
