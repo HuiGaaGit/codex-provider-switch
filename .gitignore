@@ -5,6 +5,7 @@ __pycache__/
 # PyInstaller intermediates and machine-specific spec files
 work/codex_api_provider_switch/build/
 work/codex_api_provider_switch/*.spec
+!work/codex_api_provider_switch/Codex Provider Switch-*.spec
 
 # Local packaged releases are retained outside source control
 outputs/

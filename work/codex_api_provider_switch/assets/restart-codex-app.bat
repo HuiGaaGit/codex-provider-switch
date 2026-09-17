@@ -50,8 +50,10 @@ exit /b 0
 :StopApp
 call :CollectAppPids
 if defined APP_PIDS (
-  echo [INFO] Stopping Codex App process trees: !APP_PIDS!
-  for %%P in (!APP_PIDS!) do taskkill /PID %%P /T /F >nul 2>&1
+  echo [INFO] Stopping Codex App processes: !APP_PIDS!
+  rem Never use /T here: the provider switch can be launched from Codex and
+  rem must not be terminated together with the Codex process tree.
+  for %%P in (!APP_PIDS!) do taskkill /PID %%P /F >nul 2>&1
   call :WaitForExit || (
     echo [ERROR] Codex App did not exit within 25 seconds.
     exit /b 1
