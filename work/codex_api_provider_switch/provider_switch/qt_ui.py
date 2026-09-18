@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSizeGrip,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
@@ -463,7 +464,7 @@ class TokenGaugeWidget(QWidget):
         self._ratio = 0.0
         self._color = QColor("#71d3ae")
         self._sessions = 0
-        self.setMinimumSize(150, 130)
+        self.setMinimumSize(150, 168)
 
     def set_data(self, label: str, tokens: int, ratio: float, color: str, sessions: int) -> None:
         self._label = label
@@ -477,11 +478,11 @@ class TokenGaugeWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         w = self.width()
-        h = self.height()
         margin = 10
-        gauge_h = h * 0.52
-        rect = QRectF(margin, margin, w - 2 * margin, gauge_h * 2)
         pen_width = 9
+        arc_height = 58
+        arc_width = min(w - 2 * margin, 120)
+        rect = QRectF((w - arc_width) / 2, margin, arc_width, arc_height * 2)
         # Background arc (full semicircle)
         bg_pen = QPen(QColor(255, 255, 255, 30), pen_width)
         bg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -494,22 +495,22 @@ class TokenGaugeWidget(QWidget):
             painter.setPen(fg_pen)
             span = int(180 * 16 * self._ratio)
             painter.drawArc(rect, 180 * 16, -span)
-        # Center text
+        # Text stack below the arc
         painter.setPen(QColor("#ffffff"))
         painter.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
-        center_y = margin + gauge_h + 4
-        painter.drawText(QRectF(0, center_y, w, 24), Qt.AlignHCenter | Qt.AlignVCenter, _format_int(self._tokens))
+        text_top = margin + arc_height + 6
+        painter.drawText(QRectF(0, text_top, w, 24), Qt.AlignHCenter | Qt.AlignVCenter, _format_int(self._tokens))
         painter.setPen(QColor("#8fa0aa"))
         painter.setFont(QFont("Segoe UI", 8))
-        painter.drawText(QRectF(0, center_y + 22, w, 16), Qt.AlignHCenter | Qt.AlignVCenter, "tokens")
+        painter.drawText(QRectF(0, text_top + 24, w, 13), Qt.AlignHCenter | Qt.AlignVCenter, "tokens")
         # Bottom label
         painter.setPen(QColor("#c8d0d4"))
         painter.setFont(QFont("Segoe UI", 9, QFont.Weight.Medium))
-        painter.drawText(QRectF(0, h - 22, w, 18), Qt.AlignHCenter | Qt.AlignVCenter, self._label)
+        painter.drawText(QRectF(0, text_top + 37, w, 16), Qt.AlignHCenter | Qt.AlignVCenter, self._label)
         if self._sessions > 0:
             painter.setPen(QColor("#687178"))
             painter.setFont(QFont("Segoe UI", 7))
-            painter.drawText(QRectF(0, h - 12, w, 12), Qt.AlignHCenter | Qt.AlignVCenter, f"{self._sessions} 会话")
+            painter.drawText(QRectF(0, text_top + 53, w, 12), Qt.AlignHCenter | Qt.AlignVCenter, f"{self._sessions} 会话")
         painter.end()
 
 
@@ -657,6 +658,9 @@ class ProviderSwitchWindow(QMainWindow):
         self.footer_status.setProperty("class", "muted")
         footer_layout.addWidget(self.footer_status)
         footer_layout.addStretch(1)
+        self.size_grip = QSizeGrip(footer)
+        self.size_grip.setFixedSize(16, 16)
+        footer_layout.addWidget(self.size_grip, 0, Qt.AlignBottom | Qt.AlignRight)
         outer.addWidget(footer)
 
     def _build_tray(self) -> None:
