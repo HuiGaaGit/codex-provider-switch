@@ -1117,7 +1117,7 @@ class ProviderSwitchWindow(QMainWindow):
             profile = self.controller.settings.profiles.get(pid)
             label = profile.display_name if profile else pid
             self._timeline_widget.set_provider(pid, label, buckets)
-        recent = records[-8:]
+        recent = records[-3:]
         if recent:
             lines = []
             labels = {

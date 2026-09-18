@@ -176,7 +176,18 @@ class MonitorHistory:
                                     if switch_index >= 0:
                                         provider = switch_profiles[switch_index]
                                 latency_ms = None
-                                if request_started is not None and ts >= request_started:
+                                # Codex exposes the time to the first model
+                                # token on task_complete. This is the
+                                # provider response latency; duration_ms also
+                                # includes local tools and user interaction.
+                                if payload.get("type") == "task_complete":
+                                    try:
+                                        candidate = int(payload.get("time_to_first_token_ms", 0) or 0)
+                                        if candidate > 0:
+                                            latency_ms = candidate
+                                    except (TypeError, ValueError):
+                                        pass
+                                if latency_ms is None and request_started is not None and ts >= request_started:
                                     latency_ms = max(0, round((ts - request_started) * 1000))
                                 records.append(HealthRecord(ts, provider, state, latency_ms))
                                 request_started = None
