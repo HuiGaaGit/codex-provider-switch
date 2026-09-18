@@ -772,6 +772,39 @@ class ProviderSwitchWindow(QMainWindow):
         if app is not None:
             QTimer.singleShot(0, app.quit)
 
+    def nativeEvent(self, event_type: Any, message: Any) -> tuple[bool, int]:
+        """Let Windows Restart Manager close the process instead of hiding it.
+
+        The normal user close action still honors the tray preference.  During
+        installation Windows sends the Restart Manager session messages; if we
+        only hide to the tray, the installer waits forever for the process.
+        """
+        if os.name == "nt" and event_type == "windows_generic_MSG":
+            try:
+                import ctypes
+
+                class _MSG(ctypes.Structure):
+                    _fields_ = [
+                        ("hwnd", ctypes.c_void_p),
+                        ("message", ctypes.c_uint),
+                        ("wParam", ctypes.c_size_t),
+                        ("lParam", ctypes.c_ssize_t),
+                        ("time", ctypes.c_uint),
+                        ("pt_x", ctypes.c_long),
+                        ("pt_y", ctypes.c_long),
+                    ]
+
+                native = _MSG.from_address(int(message))
+                if native.message == 0x0011:  # WM_QUERYENDSESSION
+                    return True, 1
+                if native.message == 0x0016 and native.wParam:  # WM_ENDSESSION
+                    self._force_exit = True
+                    QTimer.singleShot(0, self.exit_application)
+                    return True, 0
+            except Exception:
+                pass
+        return super().nativeEvent(event_type, message)
+
     def mousePressEvent(self, event: Any) -> None:
         if event.button() == Qt.LeftButton and event.position().y() < 78:
             self._drag_origin = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
