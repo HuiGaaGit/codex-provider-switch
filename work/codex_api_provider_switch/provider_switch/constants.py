@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 APP_NAME = "Codex Provider Switch"
-APP_VERSION = "1.2.8"
+APP_VERSION = "1.2.9"
 APP_SLUG = "codex-provider-switch"
 
 DEFAULT_CODEX_HOME = Path.home() / ".codex"
@@ -67,3 +67,4 @@ COLORS = {
     "relay2": "#c06a1b",
     "glm": "#7257b5",
 }
+

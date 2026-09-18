@@ -237,6 +237,7 @@ class ConfigManager:
         preserve_provider_key: bool,
         stable_provider_key: str,
         catalog_path: Path | None = None,
+        clear_other_keys: list[str] | None = None,
     ) -> tuple[str, str]:
         original, _ = self.read()
         if profile.kind == "official":
@@ -244,6 +245,10 @@ class ConfigManager:
             if profile.model:
                 updated = _set_top_level(updated, "model", profile.model)
             updated = _set_top_level(updated, "model_catalog_json", None)
+            for key in clear_other_keys or []:
+                updated = _remove_provider_table_keys(
+                    updated, key, ("experimental_bearer_token", "env_key", "http_headers")
+                )
             return updated, "openai"
         if not profile.base_url:
             raise ConfigError(f"{profile.display_name} 尚未配置 API 地址。")
@@ -278,6 +283,10 @@ class ConfigManager:
         updated = _remove_provider_table_keys(updated, provider_key, ("env_key",))
         if profile.kind == "glm":
             updated = _remove_provider_table_keys(updated, provider_key, ("http_headers",))
+        for key in clear_other_keys or []:
+            updated = _remove_provider_table_keys(
+                updated, key, ("experimental_bearer_token", "env_key", "http_headers")
+            )
         self._validate_rendered(updated, provider_key)
         return updated, provider_key
 
@@ -302,11 +311,17 @@ class ConfigManager:
         preserve_provider_key: bool,
         stable_provider_key: str,
         catalog_path: Path | None = None,
+        clear_other_keys: list[str] | None = None,
     ) -> tuple[Path | None, str]:
         with self._lock:
             original, encoding = self.read()
             updated, provider_key = self.render_profile(
-                profile, api_key, preserve_provider_key, stable_provider_key, catalog_path
+                profile,
+                api_key,
+                preserve_provider_key,
+                stable_provider_key,
+                catalog_path,
+                clear_other_keys,
             )
             if updated == original:
                 return None, provider_key
@@ -328,6 +343,40 @@ class ConfigManager:
                 except OSError:
                     pass
             return backup, provider_key
+
+    def clear_provider_keys(self, keys: list[str]) -> tuple[Path | None, list[str]]:
+        """Drop live connection fields from the given provider tables (keep entries)."""
+        cleared: list[str] = []
+        with self._lock:
+            original, encoding = self.read()
+            updated = original
+            for key in keys:
+                stripped = _remove_provider_table_keys(
+                    updated, key, ("experimental_bearer_token", "env_key", "http_headers")
+                )
+                if stripped != updated:
+                    cleared.append(key)
+                updated = stripped
+            if updated == original:
+                return None, []
+            backup = self._create_backup()
+            temporary = self.config_path.with_name("config.toml.provider-switch.tmp")
+            try:
+                temporary.write_text(updated, encoding=encoding, newline="")
+                os.replace(temporary, self.config_path)
+                self.snapshot()
+            except Exception as exc:
+                try:
+                    shutil.copy2(backup, self.config_path)
+                except OSError:
+                    pass
+                raise ConfigError(f"写入失败，已尝试恢复备份：{exc}") from exc
+            finally:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return backup, cleared
 
     def _create_backup(self) -> Path:
         self.backup_directory.mkdir(parents=True, exist_ok=True)

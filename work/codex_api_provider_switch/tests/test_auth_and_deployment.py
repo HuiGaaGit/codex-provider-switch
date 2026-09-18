@@ -216,6 +216,45 @@ class DeploymentPolicyTests(unittest.TestCase):
             self.assertTrue(fake_auth.status().logged_in)
             self.assertEqual(0, fake_auth.logout_calls)
 
+    def test_openai_switch_disconnect_cleared_glm_bearer_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            controller = build_controller(Path(name), active_glm=True)
+            controller.auth = FakeAuthManager(controller.codex_home, logged_in=True)  # type: ignore[assignment]
+            controller._set_auth_retention(True)
+
+            controller.switch_profile("openai", disconnect_others=True)
+
+            parsed = tomllib.loads((controller.codex_home / "config.toml").read_text(encoding="utf-8"))
+            provider = parsed["model_providers"]["cch_gz"]
+            self.assertNotIn("experimental_bearer_token", provider)
+            self.assertEqual("https://open.bigmodel.cn/api/v1", provider["base_url"])
+
+    def test_openai_switch_keep_alive_preserves_glm_bearer(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            controller = build_controller(Path(name), active_glm=True)
+            controller.auth = FakeAuthManager(controller.codex_home, logged_in=True)  # type: ignore[assignment]
+            controller._set_auth_retention(True)
+
+            controller.switch_profile("openai", disconnect_others=False)
+
+            parsed = tomllib.loads((controller.codex_home / "config.toml").read_text(encoding="utf-8"))
+            provider = parsed["model_providers"]["cch_gz"]
+            self.assertEqual("glm-key", provider["experimental_bearer_token"])
+
+    def test_disconnect_other_providers_keeps_active_glm_connection(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            controller = build_controller(Path(name), active_glm=True)
+            controller.settings.preserve_provider_key = False
+            controller.settings.profiles["glm"].provider_key = "ZAI"
+            controller.switch_profile("glm", disconnect_others=False)
+
+            result = controller.disconnect_other_providers()
+
+            parsed = tomllib.loads((controller.codex_home / "config.toml").read_text(encoding="utf-8"))
+            self.assertEqual("ZAI", parsed["model_provider"])
+            self.assertEqual("glm-key", parsed["model_providers"]["ZAI"]["experimental_bearer_token"])
+            self.assertTrue(any("已断开" in item for item in result.warnings))
+
     def test_single_relay_setup_enables_only_configured_relay(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             controller = build_controller(Path(name))

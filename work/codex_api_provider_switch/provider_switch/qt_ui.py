@@ -817,6 +817,10 @@ class ProviderSwitchWindow(QMainWindow):
         self.alert_text.setProperty("class", "body")
         self.alert_text.setWordWrap(True)
         alert_layout.addWidget(self.alert_text)
+        self.disconnect_others_button = QPushButton("断开其他 API 供应商")
+        self.disconnect_others_button.setToolTip("清除配置中其他供应商的 bearer 连接字段，仅保留当前供应商")
+        self.disconnect_others_button.clicked.connect(self.confirm_disconnect_others)
+        alert_layout.addWidget(self.disconnect_others_button, 0, Qt.AlignLeft)
         bottom.addWidget(self.token_summary, 1)
         bottom.addWidget(self.alert_summary, 1)
         layout.addLayout(bottom)
@@ -1988,12 +1992,33 @@ class ProviderSwitchWindow(QMainWindow):
             )
             return
         profile = self.controller.settings.profiles[profile_id]
-        answer = QMessageBox.question(self, "确认切换", f"切换到 {profile.display_name}？\n当前 provider 标签会按设置处理。")
-        if answer != QMessageBox.Yes:
+        others = [
+            p.display_name
+            for pid, p in self.controller.settings.profiles.items()
+            if pid != profile_id and p.kind != "official" and self.controller.credentials.get(pid, "").strip()
+        ]
+        box = QMessageBox(self)
+        box.setWindowTitle("确认切换")
+        others_note = ""
+        if others:
+            others_note = f"\n\n当前还有已保存 Key 的 API 供应商：{'、'.join(others)}。"
+        box.setText(f"切换到 {profile.display_name}？{others_note}")
+        disconnect_button = box.addButton("断开其他供应商", QMessageBox.YesRole)
+        keep_button = box.addButton("保留共存", QMessageBox.NoRole)
+        cancel_button = box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(keep_button if others else disconnect_button)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is cancel_button:
             return
+        disconnect_others = clicked is disconnect_button
         self._set_busy(True, f"正在切换到 {profile.display_name}")
         self._run_job(
-            lambda: self.controller.switch_profile(profile_id, progress=lambda message: self._queue_status(message)),
+            lambda: self.controller.switch_profile(
+                profile_id,
+                progress=lambda message: self._queue_status(message),
+                disconnect_others=disconnect_others,
+            ),
             self._handle_switch_done,
             self._handle_switch_error,
         )
@@ -2009,6 +2034,33 @@ class ProviderSwitchWindow(QMainWindow):
     def _handle_switch_error(self, exc: BaseException) -> None:
         self._set_busy(False, "切换失败")
         QMessageBox.warning(self, "切换失败", str(exc))
+
+    def confirm_disconnect_others(self) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle("断开其他 API")
+        box.setText(
+            "将清除配置中其他供应商的 bearer 连接字段（保留地址和模型，Key 仍保存在本机），\n"
+            "仅保留当前供应商的连接。确定继续？"
+        )
+        confirm = box.addButton("断开", QMessageBox.YesRole)
+        box.addButton("取消", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is not confirm:
+            return
+        self._set_busy(True, "正在断开其他 API 供应商")
+        self._run_job(
+            lambda: self.controller.disconnect_other_providers(
+                progress=lambda message: self._queue_status(message)
+            ),
+            self._handle_disconnect_done,
+            self._handle_switch_error,
+        )
+
+    def _handle_disconnect_done(self, result: OperationResult) -> None:
+        self._set_busy(False, "已断开其他 API 供应商")
+        self.refresh_all(local_only=True)
+        if result.warnings:
+            QMessageBox.information(self, "断开完成", "\n".join(result.warnings))
 
     def open_setup_wizard(self) -> None:
         wizard = SetupWizard(self)

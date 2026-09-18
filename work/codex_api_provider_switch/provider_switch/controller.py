@@ -247,8 +247,27 @@ class ApplicationController:
                 return profile_id
         return self.settings.active_profile_id or ""
 
+    def _managed_provider_keys(self, exclude: set[str]) -> list[str]:
+        keys: set[str] = set()
+        for profile in self.settings.profiles.values():
+            if profile.provider_key:
+                keys.add(profile.provider_key)
+        if self.settings.stable_provider_key:
+            keys.add(self.settings.stable_provider_key)
+        return sorted(keys - exclude)
+
+    def _target_provider_key(self, profile: ProviderProfile) -> str:
+        if profile.kind == "official":
+            return "openai"
+        if self.settings.preserve_provider_key and self.settings.stable_provider_key:
+            return self.settings.stable_provider_key
+        return profile.provider_key
+
     def switch_profile(
-        self, profile_id: str, progress: ProgressCallback | None = None
+        self,
+        profile_id: str,
+        progress: ProgressCallback | None = None,
+        disconnect_others: bool = True,
     ) -> OperationResult:
         if profile_id not in self.settings.profiles:
             raise ValueError(f"未知供应商：{profile_id}")
@@ -271,12 +290,19 @@ class ApplicationController:
         result = OperationResult(profile_id=profile_id, provider_key="")
         if progress:
             progress("正在备份并写入 config.toml")
+        target_key = self._target_provider_key(profile)
+        if disconnect_others:
+            exclude = set() if profile.kind == "official" else {target_key}
+            clear_keys = self._managed_provider_keys(exclude)
+        else:
+            clear_keys = []
         backup, provider_key = self.config.apply_profile(
             profile,
             api_key,
             self.settings.preserve_provider_key,
             self.settings.stable_provider_key,
             catalog_path,
+            clear_keys,
         )
         result.provider_key = provider_key
         result.backup_path = backup
@@ -319,6 +345,39 @@ class ApplicationController:
                 result.restart_summary = self.process_controller.start(restart_target)
             except Exception as exc:
                 result.warnings.append(f"配置已保存，但 Codex 自动重启失败：{exc}")
+        return result
+
+    def disconnect_other_providers(self, progress: ProgressCallback | None = None) -> OperationResult:
+        """Drop live bearer tokens from every provider table except the active one."""
+        active = self.detect_active_profile() or "openai"
+        profile = self.settings.profiles.get(active)
+        active_key = self._target_provider_key(profile) if profile is not None and profile.kind != "official" else None
+        keys = self._managed_provider_keys({active_key} if active_key else set())
+        result = OperationResult(profile_id=active, provider_key=active_key or "openai")
+        if not keys:
+            result.warnings.append("没有其他已配置的 API 供应商需要断开。")
+            return result
+        if progress:
+            progress("正在断开其他 API 供应商的连接")
+        backup, cleared = self.config.clear_provider_keys(keys)
+        result.backup_path = backup
+        result.warnings.append(f"已断开：{ '、'.join(cleared) if cleared else '无（原本就没有活跃连接）' }")
+        if self.settings.auto_restart:
+            try:
+                restart_target = self.process_controller.locate_running()
+                if restart_target is not None:
+                    if progress:
+                        progress("正在安全重启 Codex 以生效断开")
+                    self.process_controller.stop()
+                    active_profile = self.settings.profiles.get(active)
+                    if active_profile is not None and active_profile.kind != "official":
+                        try:
+                            sync_thread_models(self.codex_home, active_key or "", active_profile.model)
+                        except (ThreadStateError, OSError):
+                            pass
+                    result.restart_summary = self.process_controller.start(restart_target)
+            except Exception as exc:
+                result.warnings.append(f"自动重启失败：{exc}")
         return result
 
     def sync_history(self) -> str:
