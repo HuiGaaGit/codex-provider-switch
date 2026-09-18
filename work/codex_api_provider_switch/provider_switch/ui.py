@@ -31,7 +31,10 @@ PROFILE_COLORS = {
 
 
 def format_tokens(value: int) -> str:
-    return f"{value / 1_000_000:.1f}M"
+    millions = value / 1_000_000
+    if millions >= 100:
+        return f"{millions:,.0f}M"
+    return f"{millions:,.1f}M"
 
 
 def make_button(

@@ -61,7 +61,10 @@ INSTANCE_SERVER_NAME = "CodexProviderSwitch.BackgroundMonitor"
 
 
 def _format_int(value: int) -> str:
-    return f"{value / 1_000_000:.1f}M"
+    millions = value / 1_000_000
+    if millions >= 100:
+        return f"{millions:,.0f}M"
+    return f"{millions:,.1f}M"
 
 
 def _format_quota_windows(items: list[Any]) -> str:

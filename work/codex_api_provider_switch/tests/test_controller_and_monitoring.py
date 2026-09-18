@@ -64,8 +64,9 @@ class MonitoringTests(unittest.TestCase):
         self.assertEqual("USD", windows[0].unit)
 
     def test_local_token_usage_is_displayed_in_millions(self) -> None:
-        self.assertEqual("8810.7M", format_tokens(8_810_684_590))
         self.assertEqual("0.0M", format_tokens(0))
+        self.assertEqual("12.3M", format_tokens(12_345_678))
+        self.assertEqual("8,811M", format_tokens(8_810_684_590))
 
     def test_wallet_quota_without_percentage_has_no_display_percentage(self) -> None:
         window = QuotaWindow("钱包余额", remaining=100995323.2886, unit="USD")
