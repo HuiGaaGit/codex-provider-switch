@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 APP_NAME = "Codex Provider Switch"
-APP_VERSION = "1.2.18"
+APP_VERSION = "1.2.19"
 APP_SLUG = "codex-provider-switch"
 
 DEFAULT_CODEX_HOME = Path.home() / ".codex"

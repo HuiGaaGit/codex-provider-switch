@@ -1102,7 +1102,7 @@ class ProviderSwitchWindow(QMainWindow):
         )
         self._set_monitor_stat(
             self.monitor_latency_card,
-            f"{overall_latency:.0f} ms" if overall_latency is not None else "--",
+            f"{overall_latency / 1000:,.2f} 秒" if overall_latency is not None else "--",
         )
         self._set_monitor_stat(
             self.monitor_error_card,
@@ -1127,7 +1127,7 @@ class ProviderSwitchWindow(QMainWindow):
             }
             for item in reversed(recent):
                 stamp = datetime.fromtimestamp(item.timestamp).strftime("%H:%M:%S")
-                latency = f"{item.latency_ms} ms" if item.latency_ms is not None else "耗时未知"
+                latency = f"{item.latency_ms / 1000:,.2f} 秒" if item.latency_ms is not None else "耗时未知"
                 lines.append(f"{stamp}  {labels.get(item.profile_id, item.profile_id)}  {latency}")
             self._monitor_latency_detail.setText("最近请求响应时间：\n" + "\n".join(lines))
         else:
