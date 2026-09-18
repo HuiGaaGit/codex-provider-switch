@@ -236,8 +236,12 @@ def validate_settings(settings: AppSettings) -> None:
         profile.base_url = profile.base_url.strip().rstrip("/")
         profile.model = profile.model.strip()[:120]
         profile.quota_url = profile.quota_url.strip()
-        profile.quota_organization_id = profile.quota_organization_id.strip()[:160]
-        profile.quota_project_id = profile.quota_project_id.strip()[:160]
+        profile.quota_organization_id = "".join(
+            profile.quota_organization_id.split()
+        )[:160]
+        project_id = profile.quota_project_id.strip()
+        project_id = re.sub(r"^(proj)[ \t]+", r"\1_", project_id, flags=re.IGNORECASE)
+        profile.quota_project_id = "".join(project_id.split())[:160]
         if not profile.display_name:
             raise SettingsError(f"{profile.profile_id} 的显示名称不能为空。")
         if profile.kind != "official" and not PROVIDER_KEY_RE.fullmatch(profile.provider_key):

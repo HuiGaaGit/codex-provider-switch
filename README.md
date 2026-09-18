@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.1.9`
+当前交付版本：`1.2.1`
 
 ## 日常使用
 
@@ -19,7 +19,7 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 
 - OpenAI 直连：取消自定义 `model_provider` 默认值，继续使用 Codex 当前 OpenAI/ChatGPT 登录；只有检测到保留的官方登录态时按钮才可用。
 - API1 / API2：写入各自的 `base_url`、模型和 `experimental_bearer_token`，名称与 Key 可本地修改；新装默认显示名是 `API1` 和 `API2`。
-- GLM：写入 `responses` 协议、GLM 模型、Key 和当前 Codex Home 下的 `models.json`；切换时会同步未归档会话线程的模型字段，重新打开旧会话也会跟随当前 API 模型。
+- GLM：写入 `responses` 协议、GLM 模型、Key 和当前 Codex Home 下的 `models.json`；切换时会同步未归档会话线程的模型字段，重新打开旧会话也会跟随当前 API 模型。团队项目 ID 使用 `proj_xxxxxxx`，保存时自动纠正粘贴产生的空格分隔。
 - GLM 切换会清掉旧配置里遗留的 `env_key` 和 `http_headers`（尤其是 `OPENAI_API_KEY`、`x-openai-actor-authorization`），避免认证来源歧义和应用专用请求头破坏 GLM 流式响应；`experimental_bearer_token` 是唯一认证来源。
 - 保留官方登录态与 GLM 不冲突：GLM 始终写入 `requires_openai_auth = false` 并使用自己的 bearer token；官方凭据缓存保持不变，切回 OpenAI 时继续使用。
 - “保持同一 provider 标签”默认开启。第三方供应商切换时复用首次读取到的 provider key（本机当前为 `cch_gz`），避免新会话按多个标签分裂。
@@ -83,10 +83,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.1.9.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.1.9.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.1.9.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.1.9.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.2.1.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.2.1.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.2.1.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.2.1.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -97,18 +97,30 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.1.9.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.1.9.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.2.1.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.2.1.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.1.9.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.1.9.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.1.9.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.1.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.1.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.1.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
+
+## 1.2.1 变更
+
+- GLM 供应商卡片同时显示 5 小时和周额度；进度条仍使用 5 小时窗口，悬停可见两个窗口的已用比例。
+
+1.2.1 发布校验：安装包 SHA-256 为 `F10F76CC4904BB6F3EE9FA96F2B891BCBAD70D3375FB8C831DB0D73A2BDA05D9`；便携 EXE SHA-256 为 `6BDA47C611748A6EF4AB64D59A0DB063434F81E4A559898A5DEDAC91145F3DCF`。
+
+## 1.2.0 变更
+
+- 加高 GLM 团队组织/项目 ID 输入框，并改为等宽字体，避免下划线被输入框裁剪导致无法确认格式。
+- 项目 ID 标签和示例明确为 `proj_xxxxxxx`。
+- 保存团队项目 ID 时自动把 `proj 46…` 一类空格分隔纠正为 `proj_46…`，并清理不可见空白。
 
 ## 1.1.9 变更
 

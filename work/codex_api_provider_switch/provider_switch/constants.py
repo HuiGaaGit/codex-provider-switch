@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 APP_NAME = "Codex Provider Switch"
-APP_VERSION = "1.1.9"
+APP_VERSION = "1.2.2"
 APP_SLUG = "codex-provider-switch"
 
 DEFAULT_CODEX_HOME = Path.home() / ".codex"
@@ -14,6 +14,7 @@ SETTINGS_DIRECTORY_NAME = "codex-provider-switch"
 SETTINGS_FILE_NAME = "settings.json"
 CREDENTIALS_FILE_NAME = "credentials.dat"
 SWITCH_LOG_NAME = "switch-history.jsonl"
+MONITOR_HISTORY_DIRECTORY_NAME = "monitor-history"
 BACKUP_DIRECTORY_NAME = "provider-switch-backups"
 MODEL_CATALOG_NAME = "models.json"
 

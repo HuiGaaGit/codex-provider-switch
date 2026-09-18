@@ -177,6 +177,18 @@ class SettingsAndCatalogTests(unittest.TestCase):
             self.assertEqual("org-round-trip", loaded.profiles["glm"].quota_organization_id)
             self.assertEqual("proj-round-trip", loaded.profiles["glm"].quota_project_id)
 
+    def test_team_project_display_space_normalizes_to_underscore(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            store = SettingsStore(Path(name))
+            settings = AppSettings(codex_home=str(Path(name) / ".codex"), setup_complete=True)
+            glm = settings.profiles["glm"]
+            glm.quota_organization_id = "org- test "
+            glm.quota_project_id = "proj 46example"
+            store.save(settings, {})
+            loaded, _ = store.load()
+            self.assertEqual("org-test", loaded.profiles["glm"].quota_organization_id)
+            self.assertEqual("proj_46example", loaded.profiles["glm"].quota_project_id)
+
     def test_settings_round_trip_does_not_store_plaintext_key(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             store = SettingsStore(Path(name))

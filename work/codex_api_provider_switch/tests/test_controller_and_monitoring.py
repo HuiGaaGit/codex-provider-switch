@@ -11,6 +11,7 @@ from provider_switch.controller import ApplicationController
 from provider_switch.models import AppSettings, ConfigSnapshot
 from provider_switch.models import ProviderProfile, QuotaWindow
 from provider_switch.ui import format_tokens
+from provider_switch.qt_ui import _format_quota_windows
 from provider_switch.monitoring import (
     _glm_quota_request,
     _parse_glm_quota,
@@ -67,6 +68,16 @@ class MonitoringTests(unittest.TestCase):
     def test_wallet_quota_without_percentage_has_no_display_percentage(self) -> None:
         window = QuotaWindow("钱包余额", remaining=100995323.2886, unit="USD")
         self.assertIsNone(window.used_percent)
+
+    def test_glm_card_shows_five_hour_and_weekly_windows(self) -> None:
+        windows = [
+            QuotaWindow("5 小时", used_percent=19.0, remaining=81.0, total=100.0, unit="%"),
+            QuotaWindow("周额度", used_percent=7.0, remaining=93.0, total=100.0, unit="%"),
+        ]
+        self.assertEqual(
+            ["5 小时剩余 81.0%", "周额度剩余 93.0%"],
+            _format_quota_windows(windows).splitlines(),
+        )
 
     def test_session_scanner_uses_final_cumulative_token_count_once(self) -> None:
         with tempfile.TemporaryDirectory() as name:

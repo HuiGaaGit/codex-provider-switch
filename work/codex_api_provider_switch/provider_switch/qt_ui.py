@@ -44,6 +44,7 @@ from .catalog import resource_path, validate_catalog_text
 from .constants import APP_NAME, APP_VERSION
 from .controller import ApplicationController, OperationResult
 from .models import ConfigSnapshot, ProviderProfile, ProviderTelemetry, TokenUsage
+from .monitor_history import HealthRecord, MonitorHistory, ProviderSummary
 from .monitoring import check_provider
 from .threadripper import install_threadripper
 
@@ -60,6 +61,17 @@ INSTANCE_SERVER_NAME = "CodexProviderSwitch.BackgroundMonitor"
 
 def _format_int(value: int) -> str:
     return f"{value / 1_000_000:.1f}M"
+
+
+def _format_quota_windows(items: list[Any]) -> str:
+    lines: list[str] = []
+    for item in items:
+        if item.used_percent is None:
+            continue
+        reset = f" · 重置 {item.reset_at}" if item.reset_at else ""
+        remaining = 100.0 - item.used_percent
+        lines.append(f"{item.label}剩余 {remaining:.1f}%{reset}")
+    return "\n".join(lines)
 
 
 def _open_path(path: Path) -> None:
@@ -247,13 +259,16 @@ class ProviderCard(GlassPanel):
             }.get(health.state, health.state))
         self.health.setText(health.message)
         self.latency.setText(f"{health.latency_ms} ms" if health.latency_ms is not None else "-- ms")
-        quota = next((item for item in telemetry.quota if item.used_percent is not None), None)
+        percent_quotas = [item for item in telemetry.quota if item.used_percent is not None]
+        quota = percent_quotas[0] if percent_quotas else None
         if quota is not None:
             self.quota.setRange(0, 100)
             self.quota.setValue(round(quota.used_percent or 0))
-            self.quota.setToolTip(f"{quota.label}已使用 {quota.used_percent:.1f}%")
+            self.quota.setToolTip("\n".join(
+                f"{item.label}已使用 {item.used_percent:.1f}%" for item in percent_quotas
+            ))
             self.quota.setVisible(True)
-            self.quota_text.setText(f"{quota.label}剩余 {100.0 - quota.used_percent:.1f}%")
+            self.quota_text.setText(_format_quota_windows(percent_quotas))
         else:
             self.quota.setVisible(False)
             self.quota.setRange(0, 100)
@@ -345,6 +360,16 @@ QPushButton[kind="nav"][selected="true"] {
     background: rgba(255,255,255,32); color: #ffffff;
     border: 1px solid rgba(255,255,255,34); font-weight: 700;
 }
+QPushButton[class="chip"] {
+    background: rgba(255,255,255,14); border: 1px solid rgba(255,255,255,28);
+    border-radius: 6px; padding: 4px 12px; font-size: 12px;
+    color: rgba(242,247,249,180); min-width: 32px;
+}
+QPushButton[class="chip"]:checked {
+    background: rgba(111,184,255,50); border-color: rgba(111,184,255,140);
+    color: #ffffff; font-weight: 600;
+}
+QLabel[class="statValue"] { font-size: 26px; font-weight: 700; color: #ffffff; }
 QLineEdit, QComboBox, QSpinBox, QPlainTextEdit {
     background: rgba(10,16,20,82); border: 1px solid rgba(255,255,255,42);
     border-radius: 8px; padding: 8px 10px; selection-background-color: #5fa9df;
@@ -373,6 +398,59 @@ QToolTip {
     padding: 6px 8px;
 }
 """
+
+
+class MonitorTimelineWidget(QWidget):
+    """Draws per-provider uptime bars similar to CCH availability monitoring."""
+
+    COLORS = {
+        "up": QColor("#17845b"),
+        "warn": QColor("#bd6b18"),
+        "down": QColor("#c63f4d"),
+        "none": QColor(255, 255, 255, 20),
+    }
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._providers: dict[str, tuple[str, list[str]]] = {}
+        self.setMinimumHeight(120)
+
+    def set_provider(self, profile_id: str, label: str, buckets: list[str]) -> None:
+        self._providers[profile_id] = (label, buckets)
+
+    def set_ranges(self, seconds: float) -> None:
+        pass
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        row_height = 24
+        bar_height = 14
+        gap = 10
+        x_start = 90
+        margin = 8
+        y = margin
+        width = self.width() - x_start - margin
+        painter.setFont(QFont("Segoe UI", 9))
+        for pid, (label, buckets) in self._providers.items():
+            painter.setPen(QColor("#c8d0d4"))
+            painter.drawText(QRectF(0, y + 2, x_start - 8, row_height), Qt.AlignRight | Qt.AlignVCenter, label)
+            if not buckets:
+                buckets = ["none"] * 40
+            count = len(buckets)
+            seg_width = max(2, width / count) if count > 0 else width
+            for i, state in enumerate(buckets):
+                color = self.COLORS.get(state, self.COLORS["none"])
+                painter.setBrush(color)
+                painter.setPen(Qt.PenStyle.NoPen)
+                x = x_start + i * seg_width
+                painter.drawRoundedRect(QRectF(x, y + 4, seg_width - 1, bar_height), 3, 3)
+            y += row_height + gap
+        painter.end()
+
+    def sizeHint(self) -> Any:
+        from PySide6.QtCore import QSize
+        return QSize(600, len(self._providers) * 34 + 20)
 
 
 class ProviderSwitchWindow(QMainWindow):
@@ -410,9 +488,13 @@ class ProviderSwitchWindow(QMainWindow):
         self.provider_cards: dict[str, ProviderCard] = {}
         self._catalog_loaded = False
         self._config_loaded = False
+        self.monitor_history = MonitorHistory(
+            self.controller.codex_home / "codex-provider-switch" / "monitor-history"
+        )
 
         self._build_shell()
         self._build_dashboard()
+        self._build_monitoring_page()
         self._build_providers_page()
         self._build_catalog_page()
         self._build_tools_page()
@@ -486,6 +568,7 @@ class ProviderSwitchWindow(QMainWindow):
         nav_layout.setSpacing(5)
         destinations = (
             ("dashboard", "总览"),
+            ("monitoring", "监控面板"),
             ("providers", "供应商配置"),
             ("catalog", "配置预览及调整"),
             ("tools", "会话工具"),
@@ -674,6 +757,161 @@ class ProviderSwitchWindow(QMainWindow):
         bottom.addWidget(self.alert_summary, 1)
         layout.addLayout(bottom)
 
+    def _build_monitoring_page(self) -> None:
+        page, layout = self._page(
+            "monitoring",
+            "监控面板",
+            "实时查看供应商可用性、延迟和 Token 使用量趋势",
+        )
+        # Summary cards row
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(12)
+        self.monitor_availability_card = self._monitor_stat_card("系统可用性", "--")
+        self.monitor_latency_card = self._monitor_stat_card("平均延迟", "--")
+        self.monitor_error_card = self._monitor_stat_card("错误率", "--")
+        self.monitor_providers_card = self._monitor_stat_card("活跃供应商", "--")
+        cards_row.addWidget(self.monitor_availability_card, 1)
+        cards_row.addWidget(self.monitor_latency_card, 1)
+        cards_row.addWidget(self.monitor_error_card, 1)
+        cards_row.addWidget(self.monitor_providers_card, 1)
+        layout.addLayout(cards_row)
+
+        # Time range selector
+        range_row = QHBoxLayout()
+        range_row.setSpacing(6)
+        range_label = QLabel("时间范围")
+        range_label.setProperty("class", "muted")
+        range_row.addWidget(range_label)
+        self._monitor_range_group = QButtonGroup(self)
+        self._monitor_range_group.setExclusive(True)
+        ranges = (
+            ("15m", 15 * 60),
+            ("1h", 3600),
+            ("6h", 6 * 3600),
+            ("24h", 24 * 3600),
+            ("7d", 7 * 24 * 3600),
+        )
+        self._monitor_ranges: dict[str, float] = {}
+        for label, seconds in ranges:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFixedHeight(28)
+            btn.setProperty("class", "chip")
+            btn.clicked.connect(lambda checked=False, s=seconds: self._refresh_monitor_page())
+            self._monitor_range_group.addButton(btn)
+            range_row.addWidget(btn)
+            self._monitor_ranges[label] = seconds
+            if seconds == 3600:
+                btn.setChecked(True)
+        range_row.addStretch(1)
+        layout.addLayout(range_row)
+
+        # Timeline panel
+        timeline_panel = GlassPanel(strong=True)
+        timeline_layout = QVBoxLayout(timeline_panel)
+        timeline_layout.setContentsMargins(16, 14, 16, 14)
+        timeline_layout.addWidget(self._section_title("供应商可用性时间线"))
+        self._timeline_labels: list[str] = []
+        self._timeline_widget = MonitorTimelineWidget()
+        timeline_layout.addWidget(self._timeline_widget, 1)
+        layout.addWidget(timeline_panel, 1)
+
+        # Token usage table
+        token_panel = GlassPanel()
+        token_layout = QVBoxLayout(token_panel)
+        token_layout.setContentsMargins(16, 13, 16, 13)
+        token_layout.addWidget(self._section_title("供应商 Token 使用量"))
+        self.monitor_token_text = QLabel("等待监控刷新…")
+        self.monitor_token_text.setProperty("class", "body")
+        self.monitor_token_text.setWordWrap(True)
+        token_layout.addWidget(self.monitor_token_text)
+        layout.addWidget(token_panel)
+
+    def _monitor_stat_card(self, title: str, initial: str) -> GlassPanel:
+        panel = GlassPanel()
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(16, 12, 16, 12)
+        label = QLabel(title)
+        label.setProperty("class", "muted")
+        value = QLabel(initial)
+        value.setProperty("class", "statValue")
+        lay.addWidget(label)
+        lay.addWidget(value)
+        panel._stat_value = value
+        return panel
+
+    def _set_monitor_stat(self, panel: GlassPanel, value: str) -> None:
+        panel._stat_value.setText(value)
+
+    def _refresh_monitor_page(self) -> None:
+        checked = self._monitor_range_group.checkedButton()
+        seconds = 3600.0
+        if checked is not None:
+            seconds = self._monitor_ranges.get(checked.text(), 3600.0)
+        records = self.monitor_history.load(max_age_seconds=seconds)
+        profile_ids = ["openai", "relay1", "relay2", "glm"]
+        summaries = self.monitor_history.summarize(records, profile_ids)
+        availabilities = [s.availability for s in summaries.values() if s.availability is not None]
+        overall_avail = sum(availabilities) / len(availabilities) if availabilities else None
+        latencies = [s.avg_latency_ms for s in summaries.values() if s.avg_latency_ms is not None]
+        overall_latency = sum(latencies) / len(latencies) if latencies else None
+        errors = [s.error_rate for s in summaries.values() if s.error_rate is not None]
+        overall_error = sum(errors) / len(errors) if errors else None
+        active = sum(1 for s in summaries.values() if s.total_checks > 0)
+        self._set_monitor_stat(
+            self.monitor_availability_card,
+            f"{overall_avail:.1f}%" if overall_avail is not None else "--",
+        )
+        self._set_monitor_stat(
+            self.monitor_latency_card,
+            f"{overall_latency:.0f} ms" if overall_latency is not None else "--",
+        )
+        self._set_monitor_stat(
+            self.monitor_error_card,
+            f"{overall_error:.1f}%" if overall_error is not None else "--",
+        )
+        self._set_monitor_stat(self.monitor_providers_card, f"{active}/{len(profile_ids)}")
+
+        # Timeline
+        self._timeline_widget.set_ranges(seconds)
+        for pid in profile_ids:
+            buckets = self.monitor_history.timeline_buckets(records, pid, seconds)
+            profile = self.controller.settings.profiles.get(pid)
+            label = profile.display_name if profile else pid
+            self._timeline_widget.set_provider(pid, label, buckets)
+        self._timeline_widget.repaint()
+
+    def _record_monitor_history(self, telemetry: dict[str, ProviderTelemetry]) -> None:
+        import time as _time
+        now = _time.time()
+        records = []
+        for pid, item in telemetry.items():
+            records.append(
+                HealthRecord(
+                    timestamp=now,
+                    profile_id=pid,
+                    state=item.health.state,
+                    latency_ms=item.health.latency_ms,
+                )
+            )
+        self.monitor_history.append(records)
+        self._refresh_monitor_page()
+
+    def _update_monitor_tokens(self, usage: dict[str, TokenUsage]) -> None:
+        days = self.controller.settings.usage_lookback_days
+        parts = []
+        for pid in ("openai", "relay1", "relay2", "glm"):
+            profile = self.controller.settings.profiles.get(pid)
+            if profile is None:
+                continue
+            item = usage.get(profile.provider_key)
+            label = profile.display_name
+            if item and item.total_tokens > 0:
+                parts.append(f"{label} {_format_int(item.total_tokens)}")
+            else:
+                parts.append(f"{label} --")
+        self.monitor_token_text.setText(f"近 {days} 天  ·  " + "  ·  ".join(parts))
+
     def _build_providers_page(self) -> None:
         page, layout = self._page(
             "providers",
@@ -717,10 +955,14 @@ class ProviderSwitchWindow(QMainWindow):
         self.profile_quota_org_label = QLabel("GLM 团队组织 ID")
         self.profile_quota_org = QLineEdit()
         self.profile_quota_org.setPlaceholderText("团队套餐选填，例如 org-xxxxxx")
+        self.profile_quota_org.setMinimumHeight(34)
+        self.profile_quota_org.setFont(QFont("Cascadia Code", 10))
         form.addRow(self.profile_quota_org_label, self.profile_quota_org)
-        self.profile_quota_project_label = QLabel("GLM 团队项目 ID")
+        self.profile_quota_project_label = QLabel("GLM 团队项目 ID（proj_…）")
         self.profile_quota_project = QLineEdit()
-        self.profile_quota_project.setPlaceholderText("团队套餐选填，例如 proj-xxxxxx")
+        self.profile_quota_project.setPlaceholderText("团队套餐选填，例如 proj_xxxxxxx")
+        self.profile_quota_project.setMinimumHeight(34)
+        self.profile_quota_project.setFont(QFont("Cascadia Code", 10))
         form.addRow(self.profile_quota_project_label, self.profile_quota_project)
         self.save_profile_button = QPushButton("保存配置")
         self.save_profile_button.setProperty("kind", "primary")
@@ -735,7 +977,7 @@ class ProviderSwitchWindow(QMainWindow):
         layout.addWidget(panel)
         note = QLabel(
             "中转默认自动探测 Sub2API /v1/usage 额度；也可填专用额度接口。"
-            "GLM 团队套餐需同时填写组织 ID 和项目 ID；个人套餐留空。"
+            "GLM 团队套餐需同时填写组织 ID 和项目 ID；项目 ID 使用下划线格式 proj_xxxxxxx。"
             "官方直连登录态策略在“部署与登录”中统一管理。"
         )
         note.setProperty("class", "muted")
@@ -1556,6 +1798,7 @@ class ProviderSwitchWindow(QMainWindow):
     ) -> None:
         telemetry, usage = snapshot
         self._update_usage(usage)
+        self._update_monitor_tokens(usage)
         self._handle_telemetry(telemetry)
 
     def _handle_telemetry(self, telemetry: dict[str, ProviderTelemetry]) -> None:
@@ -1566,6 +1809,7 @@ class ProviderSwitchWindow(QMainWindow):
         bad = [item.health.message for item in telemetry.values() if item.health.state in {"offline", "auth_error"}]
         self.alert_text.setText("；".join(bad[:2]) if bad else "所有已配置链路均已完成最近一次检查。")
         self._update_tray_status(telemetry, bad)
+        self._record_monitor_history(telemetry)
 
     def _update_tray_status(
         self,
@@ -2163,7 +2407,7 @@ def run_qt_smoke_test(controller: ApplicationController | None = None) -> int:
     window = ProviderSwitchWindow(controller, start_monitor=False, show_wizard=False)
     window.show()
     app.processEvents()
-    if APP_VERSION not in window.windowTitle() or len(window.pages) != 6:
+    if APP_VERSION not in window.windowTitle() or len(window.pages) != 7:
         window.exit_application()
         raise RuntimeError("Qt UI smoke test failed")
     window.exit_application()
