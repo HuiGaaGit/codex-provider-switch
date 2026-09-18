@@ -5,6 +5,7 @@ import queue
 import subprocess
 import threading
 import tomllib
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -198,12 +199,9 @@ class ProviderCard(GlassPanel):
         root.addStretch(1)
 
         footer = QHBoxLayout()
-        self.latency = QLabel("-- ms")
-        self.latency.setProperty("class", "muted")
         self.switch_button = QPushButton("切换")
         self.switch_button.setProperty("kind", "primary")
         self.switch_button.clicked.connect(lambda: self.switch_requested.emit(self.profile_id))
-        footer.addWidget(self.latency)
         footer.addStretch(1)
         footer.addWidget(self.switch_button)
         root.addLayout(footer)
@@ -258,7 +256,6 @@ class ProviderCard(GlassPanel):
         """Clear stale probe data; only the active provider is probed on demand."""
         self.health.setText("等待当前供应商检查" if active else "尚未检查（仅检查当前供应商）")
         self.health.setProperty("class", "body")
-        self.latency.setText("-- ms")
         self.quota.setVisible(False)
         self.quota.setValue(0)
         self.quota.setToolTip("")
@@ -284,7 +281,6 @@ class ProviderCard(GlassPanel):
                 "unconfigured": "未配置",
             }.get(health.state, health.state))
         self.health.setText(health.message)
-        self.latency.setText(f"{health.latency_ms} ms" if health.latency_ms is not None else "-- ms")
         percent_quotas = [item for item in telemetry.quota if item.used_percent is not None]
         quota = percent_quotas[0] if percent_quotas else None
         if quota is not None:
@@ -997,6 +993,10 @@ class ProviderSwitchWindow(QMainWindow):
         self._timeline_labels: list[str] = []
         self._timeline_widget = MonitorTimelineWidget()
         timeline_layout.addWidget(self._timeline_widget, 1)
+        self._monitor_latency_detail = QLabel("最近请求响应时间：暂无记录")
+        self._monitor_latency_detail.setProperty("class", "muted")
+        self._monitor_latency_detail.setWordWrap(True)
+        timeline_layout.addWidget(self._monitor_latency_detail)
         layout.addWidget(timeline_panel, 1)
 
         # Token usage gauges
@@ -1062,9 +1062,22 @@ class ProviderSwitchWindow(QMainWindow):
         seconds = 3600.0
         if checked is not None:
             seconds = self._monitor_ranges.get(checked.text(), 3600.0)
-        records = self.monitor_history.load_codex_request_records(
-            self.controller.codex_home, seconds
+        self._run_job(
+            lambda: (
+                seconds,
+                self.monitor_history.load_codex_request_records(
+                    self.controller.codex_home, seconds
+                ),
+            ),
+            self._render_monitor_page,
+            lambda exc: self._set_monitor_scope_error(exc),
         )
+
+    def _set_monitor_scope_error(self, exc: BaseException) -> None:
+        self._monitor_scope_hint.setText(f"读取请求记录失败：{exc}")
+
+    def _render_monitor_page(self, state: tuple[float, list[HealthRecord]]) -> None:
+        seconds, records = state
         if records:
             self._monitor_scope_hint.setText(
                 "每次只记录当时实际使用的供应商；当前时间范围内已有 "
@@ -1104,6 +1117,21 @@ class ProviderSwitchWindow(QMainWindow):
             profile = self.controller.settings.profiles.get(pid)
             label = profile.display_name if profile else pid
             self._timeline_widget.set_provider(pid, label, buckets)
+        recent = records[-8:]
+        if recent:
+            lines = []
+            labels = {
+                pid: self.controller.settings.profiles[pid].display_name
+                for pid in profile_ids
+                if pid in self.controller.settings.profiles
+            }
+            for item in reversed(recent):
+                stamp = datetime.fromtimestamp(item.timestamp).strftime("%H:%M:%S")
+                latency = f"{item.latency_ms} ms" if item.latency_ms is not None else "耗时未知"
+                lines.append(f"{stamp}  {labels.get(item.profile_id, item.profile_id)}  {latency}")
+            self._monitor_latency_detail.setText("最近请求响应时间：\n" + "\n".join(lines))
+        else:
+            self._monitor_latency_detail.setText("最近请求响应时间：暂无记录")
         self._timeline_widget.repaint()
 
     def _record_monitor_history(self, telemetry: dict[str, ProviderTelemetry]) -> None:

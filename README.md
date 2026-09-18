@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.2.15`
+当前交付版本：`1.2.16`
 
 ## 日常使用
 
@@ -83,10 +83,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.2.15.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.2.15.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.2.15.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.2.15.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.2.16.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.2.16.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.2.16.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.2.16.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -97,23 +97,23 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.2.15.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.2.15.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.2.16.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.2.16.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.15.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.15.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.15.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.16.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.16.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.16.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
-## 1.2.15 变更
+## 1.2.16 变更
 
 - Token 统计改为按每条 `token_count` 事件的累计增量计算，并按事件时间归属供应商，避免跨供应商会话和重复累计造成偏差。
-- 可用性监控改为读取 Codex 实际请求结果事件；刷新只读取本地会话日志，不主动向供应商发送探测请求。
+- 可用性监控改为读取 Codex 实际请求结果事件；刷新只读取本地会话日志，不主动向供应商发送探测请求。`n- 监控面板显示每次请求的单次响应时间，总览供应商卡片不再显示延迟毫秒。
 
 - 统一官方登录态文案：auth 仅用于 OpenAI 直连，API1、API2、GLM 使用各自独立 API Key。
 - 修复未分类凭据或 API Key 登录误解锁 OpenAI 直连的问题。
@@ -218,5 +218,7 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 - 新增 Threadripper 官方包一键安装与 SHA-256 校验。
 - 新增供应商健康、GLM/自定义额度和本机 Token 统计。
 - API Key 改为 Windows DPAPI 本地加密保存。
+
+
 
 

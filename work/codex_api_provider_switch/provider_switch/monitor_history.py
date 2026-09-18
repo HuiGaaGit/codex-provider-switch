@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+import bisect
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -96,6 +97,26 @@ class MonitorHistory:
         offline result.
         """
         cutoff = time.time() - max_age_seconds
+        switch_times: list[float] = []
+        switch_profiles: list[str] = []
+        switch_path = codex_home / "codex-provider-switch" / "switch-history.jsonl"
+        try:
+            for line in switch_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    item = json.loads(line)
+                    stamp = str(item.get("timestamp", "")).replace("Z", "+00:00")
+                    ts = datetime.fromisoformat(stamp).timestamp()
+                    profile = str(item.get("profile_id", "")).strip()
+                    if profile:
+                        switch_times.append(ts)
+                        switch_profiles.append(profile)
+                except (json.JSONDecodeError, TypeError, ValueError, OverflowError):
+                    continue
+        except OSError:
+            pass
+        paired = sorted(zip(switch_times, switch_profiles), key=lambda item: item[0])
+        switch_times = [item[0] for item in paired]
+        switch_profiles = [item[1] for item in paired]
         records: list[HealthRecord] = []
         for root_name in ("sessions", "archived_sessions"):
             root = codex_home / root_name
@@ -104,7 +125,13 @@ class MonitorHistory:
             for path in root.rglob("*.jsonl"):
                 if not path.is_file():
                     continue
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        continue
+                except OSError:
+                    continue
                 provider = "unknown"
+                request_started: float | None = None
                 try:
                     with path.open("r", encoding="utf-8", errors="replace") as stream:
                         for line in stream:
@@ -133,7 +160,9 @@ class MonitorHistory:
                             payload = event.get("payload", {})
                             if event.get("type") == "event_msg":
                                 kind = payload.get("type")
-                                if kind == "task_complete":
+                                if kind == "task_started":
+                                    request_started = ts
+                                elif kind == "task_complete":
                                     state = "healthy"
                                 elif kind == "turn_aborted":
                                     state = "warning"
@@ -142,7 +171,15 @@ class MonitorHistory:
                                 if status in {"failed", "error", "incomplete"}:
                                     state = "offline"
                             if state:
-                                records.append(HealthRecord(ts, provider, state))
+                                if switch_times:
+                                    switch_index = bisect.bisect_right(switch_times, ts) - 1
+                                    if switch_index >= 0:
+                                        provider = switch_profiles[switch_index]
+                                latency_ms = None
+                                if request_started is not None and ts >= request_started:
+                                    latency_ms = max(0, round((ts - request_started) * 1000))
+                                records.append(HealthRecord(ts, provider, state, latency_ms))
+                                request_started = None
                 except (OSError, ValueError):
                     continue
         records.sort(key=lambda item: item.timestamp)
