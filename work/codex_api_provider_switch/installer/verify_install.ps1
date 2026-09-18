@@ -3,7 +3,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$version = "1.2.10"
+$version = "1.2.11"
 $exeName = "Codex Provider Switch.exe"
 if (-not $SetupPath) {
     $SetupPath = Join-Path $PSScriptRoot "..\..\..\outputs\codex_api_provider_switch\Codex Provider Switch-Setup-$version.exe"

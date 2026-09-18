@@ -439,7 +439,11 @@ class MonitorTimelineWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._providers: dict[str, tuple[str, list[str]]] = {}
-        self.setMinimumHeight(120)
+        # Four rows need 8px top margin + 4×24px rows + 3×10px gaps,
+        # plus a little bottom breathing room.  The previous 120px minimum
+        # let the layout squeeze the last provider row out of the viewport.
+        self.setMinimumHeight(154)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
     def set_provider(self, profile_id: str, label: str, buckets: list[str]) -> None:
         self._providers[profile_id] = (label, buckets)
@@ -476,7 +480,7 @@ class MonitorTimelineWidget(QWidget):
 
     def sizeHint(self) -> Any:
         from PySide6.QtCore import QSize
-        return QSize(600, len(self._providers) * 34 + 20)
+        return QSize(600, max(154, len(self._providers) * 34 + 20))
 
 
 class TokenGaugeWidget(QWidget):
@@ -916,6 +920,7 @@ class ProviderSwitchWindow(QMainWindow):
 
         # Timeline panel
         timeline_panel = GlassPanel(strong=True)
+        timeline_panel.setMinimumHeight(216)
         timeline_layout = QVBoxLayout(timeline_panel)
         timeline_layout.setContentsMargins(16, 14, 16, 14)
         timeline_layout.addWidget(self._section_title("供应商可用性时间线"))
