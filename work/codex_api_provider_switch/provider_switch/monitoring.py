@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import bisect
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -340,8 +341,32 @@ def scan_token_usage(codex_home: Path, lookback_days: int = 30) -> dict[str, Tok
     return scan_token_usage_seconds(codex_home, lookback_days * 86400)
 
 
-def scan_token_usage_seconds(codex_home: Path, lookback_seconds: float = 30 * 86400) -> dict[str, TokenUsage]:
+def load_switch_timeline(switch_log_path: Path) -> list[tuple[float, str]]:
+    """Return sorted (epoch_seconds, profile_id) switch events."""
+    try:
+        raw = switch_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    events: list[tuple[float, str]] = []
+    for line in raw:
+        try:
+            obj = json.loads(line)
+            ts = datetime.fromisoformat(str(obj.get("timestamp", "")))
+            events.append((ts.timestamp(), str(obj.get("profile_id", ""))))
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+    events.sort(key=lambda item: item[0])
+    return events
+
+
+def scan_token_usage_seconds(
+    codex_home: Path,
+    lookback_seconds: float = 30 * 86400,
+    switch_log_path: Path | None = None,
+) -> dict[str, TokenUsage]:
     cutoff = datetime.now().timestamp() - max(60.0, lookback_seconds)
+    timeline = load_switch_timeline(switch_log_path) if switch_log_path is not None else []
+    timeline_times = [item[0] for item in timeline]
     roots = [codex_home / "sessions", codex_home / "archived_sessions"]
     files: list[Path] = []
     for root in roots:
@@ -352,6 +377,7 @@ def scan_token_usage_seconds(codex_home: Path, lookback_seconds: float = 30 * 86
         try:
             if path.stat().st_mtime < cutoff:
                 continue
+            mtime = path.stat().st_mtime
         except OSError:
             continue
         provider_key = "unknown"
@@ -392,7 +418,19 @@ def scan_token_usage_seconds(codex_home: Path, lookback_seconds: float = 30 * 86
             continue
         if final is None:
             continue
-        item = usage.setdefault(provider_key, TokenUsage(provider_key))
+        attribution = "provider_key"
+        owner = provider_key
+        if timeline:
+            idx = bisect.bisect_right(timeline_times, mtime) - 1
+            if idx >= 0 and timeline[idx][1]:
+                attribution = "timeline"
+                owner = timeline[idx][1]
+            else:
+                owner = "unknown"
+        item = usage.get(owner)
+        if item is None:
+            item = TokenUsage(owner, attribution=attribution, model_provider=provider_key)
+            usage[owner] = item
         item.input_tokens += final["input_tokens"]
         item.cached_input_tokens += final["cached_input_tokens"]
         item.output_tokens += final["output_tokens"]

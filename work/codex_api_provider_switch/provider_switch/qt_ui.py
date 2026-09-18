@@ -994,15 +994,12 @@ class ProviderSwitchWindow(QMainWindow):
         self._refresh_token_gauges()
 
     def _refresh_token_gauges(self) -> None:
-        from .monitoring import scan_token_usage_seconds
         checked = self._token_range_group.checkedButton()
         seconds = 86400.0
         if checked is not None:
             seconds = self._token_range_seconds.get(checked.text(), 86400.0)
-        codex_home = self.controller.codex_home
-
         def worker() -> dict[str, TokenUsage]:
-            return scan_token_usage_seconds(codex_home, seconds)
+            return self.controller.token_usage_seconds(seconds)
 
         def done(result: dict[str, TokenUsage] | BaseException) -> None:
             if isinstance(result, BaseException):
@@ -1015,7 +1012,7 @@ class ProviderSwitchWindow(QMainWindow):
                 gauge = self._token_gauge_widgets.get(pid)
                 if profile is None or gauge is None:
                     continue
-                item = usage.get(profile.provider_key)
+                item = usage.get(pid) or usage.get(profile.provider_key)
                 tokens = item.total_tokens if item else 0
                 sessions = item.sessions if item else 0
                 ratio = (tokens / max_tokens) if max_tokens > 0 else 0.0
@@ -1867,7 +1864,8 @@ class ProviderSwitchWindow(QMainWindow):
         self.token_text.setText(f"近 {days} 天共 {_format_int(total)} tokens，{sessions} 个本地会话。")
         for profile_id, card in self.provider_cards.items():
             profile = self.controller.settings.profiles[profile_id]
-            card.set_usage(usage.get(profile.provider_key), days)
+            item = usage.get(profile.provider_key) or usage.get(profile_id)
+            card.set_usage(item, days)
 
     def _update_openai_availability(self) -> None:
         available = self.controller.openai_available(self.cached_auth)

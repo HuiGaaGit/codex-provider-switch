@@ -203,3 +203,5 @@ class TokenUsage:
     reasoning_output_tokens: int = 0
     total_tokens: int = 0
     sessions: int = 0
+    attribution: str = ""  # "timeline" or "provider_key"
+    model_provider: str = ""

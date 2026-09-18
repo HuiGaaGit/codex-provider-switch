@@ -12,7 +12,7 @@ from .codex_process import CodexProcessController
 from .config_manager import ConfigManager, discover_codex_homes
 from .constants import SWITCH_LOG_NAME
 from .models import AppSettings, ConfigSnapshot, ProviderTelemetry, TokenUsage
-from .monitoring import check_all, check_provider, scan_token_usage
+from .monitoring import check_all, check_provider, scan_token_usage, scan_token_usage_seconds
 from .settings import SettingsError, SettingsStore, validate_settings
 from .thread_state import ThreadStateError, sync_thread_models
 from .threadripper import find_threadripper, sync_history, threadripper_version
@@ -358,7 +358,14 @@ class ApplicationController:
         return {profile.profile_id: item}
 
     def token_usage(self) -> dict[str, TokenUsage]:
-        return scan_token_usage(self.codex_home, self.settings.usage_lookback_days)
+        switch_log = self.store.data_root / SWITCH_LOG_NAME
+        return scan_token_usage_seconds(
+            self.codex_home, self.settings.usage_lookback_days * 86400, switch_log
+        )
+
+    def token_usage_seconds(self, lookback_seconds: float) -> dict[str, TokenUsage]:
+        switch_log = self.store.data_root / SWITCH_LOG_NAME
+        return scan_token_usage_seconds(self.codex_home, lookback_seconds, switch_log)
 
     def _record_switch(self, profile_id: str, provider_key: str) -> None:
         self.store.data_root.mkdir(parents=True, exist_ok=True)

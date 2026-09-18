@@ -18,6 +18,8 @@ from provider_switch.monitoring import (
     _parse_generic_quota,
     _relay_quota_url,
     scan_token_usage,
+    scan_token_usage_seconds,
+    load_switch_timeline,
 )
 from provider_switch.settings import SettingsStore
 from provider_switch.thread_state import sync_thread_models
@@ -108,6 +110,50 @@ class MonitoringTests(unittest.TestCase):
             self.assertEqual(30, usage.total_tokens)
             self.assertEqual(25, usage.input_tokens)
             self.assertEqual(1, usage.sessions)
+
+    def test_token_usage_attributes_sessions_by_switch_timeline(self) -> None:
+        import os
+        import time as time_module
+        from datetime import datetime, timezone, timedelta
+
+        with tempfile.TemporaryDirectory() as name:
+            home = Path(name)
+            data_root = home / "switch-data"
+            data_root.mkdir(parents=True)
+            now = time_module.time()
+            # Session written "now", meta still carries the stable provider label.
+            session_dir = home / "sessions" / "2026" / "09" / "18"
+            session_dir.mkdir(parents=True)
+            events = [
+                {"type": "session_meta", "payload": {"model_provider": "cch_gz"}},
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {"total_token_usage": {"input_tokens": 20, "cached_input_tokens": 0, "output_tokens": 4, "reasoning_output_tokens": 0, "total_tokens": 24}},
+                    },
+                },
+            ]
+            session_file = session_dir / "rollout-timeline.jsonl"
+            session_file.write_text(
+                "\n".join(json.dumps(item) for item in events) + "\n", encoding="utf-8"
+            )
+            os.utime(session_file, (now, now))
+            # Switch log: glm was switched to 1 hour ago (before the session mtime).
+            switched_at = datetime.fromtimestamp(now - 3600, tz=timezone.utc).isoformat()
+            switch_log = data_root / "switch-history.jsonl"
+            switch_log.write_text(
+                json.dumps({"timestamp": switched_at, "profile_id": "glm", "provider_key": "cch_gz"}) + "\n",
+                encoding="utf-8",
+            )
+            timeline = load_switch_timeline(switch_log)
+            self.assertEqual(1, len(timeline))
+            self.assertEqual("glm", timeline[0][1])
+            usage = scan_token_usage_seconds(home, 30 * 86400, switch_log)
+            self.assertIn("glm", usage)
+            self.assertEqual(24, usage["glm"].total_tokens)
+            self.assertEqual(1, usage["glm"].sessions)
+            self.assertEqual("timeline", usage["glm"].attribution)
 
     def test_thread_model_sync_updates_open_threads_and_preserves_archived(self) -> None:
         with tempfile.TemporaryDirectory() as name:
