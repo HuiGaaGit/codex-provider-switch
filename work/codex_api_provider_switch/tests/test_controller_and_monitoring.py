@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import tomllib
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -155,6 +156,30 @@ class MonitoringTests(unittest.TestCase):
             self.assertEqual(24, usage["glm"].total_tokens)
             self.assertEqual(1, usage["glm"].sessions)
             self.assertEqual("timeline", usage["glm"].attribution)
+
+    def test_session_scanner_uses_request_deltas_and_event_switch_time(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            home = Path(name)
+            session_dir = home / "sessions" / "2026" / "09" / "18"
+            session_dir.mkdir(parents=True)
+            now = datetime.now(timezone.utc)
+            events = [
+                {"type": "session_meta", "payload": {"model_provider": "stable"}},
+                {"timestamp": (now - timedelta(minutes=3)).isoformat(), "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 100, "cached_input_tokens": 20, "output_tokens": 10, "reasoning_output_tokens": 4, "total_tokens": 110}}}},
+                {"timestamp": (now - timedelta(minutes=1)).isoformat(), "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 180, "cached_input_tokens": 60, "output_tokens": 25, "reasoning_output_tokens": 9, "total_tokens": 205}}}},
+            ]
+            session_file = session_dir / "rollout-delta.jsonl"
+            session_file.write_text("\n".join(json.dumps(item) for item in events) + "\n", encoding="utf-8")
+            switch_log = home / "switch-history.jsonl"
+            switch_log.write_text(
+                json.dumps({"timestamp": (now - timedelta(minutes=2)).isoformat(), "profile_id": "glm"}) + "\n",
+                encoding="utf-8",
+            )
+            usage = scan_token_usage_seconds(home, 3600, switch_log)
+            self.assertEqual(110, usage["unknown"].total_tokens)
+            self.assertEqual(95, usage["glm"].total_tokens)
+            self.assertEqual(1, usage["unknown"].sessions)
+            self.assertEqual(1, usage["glm"].sessions)
 
     def test_thread_model_sync_updates_open_threads_and_preserves_archived(self) -> None:
         with tempfile.TemporaryDirectory() as name:

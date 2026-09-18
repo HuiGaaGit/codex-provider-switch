@@ -381,60 +381,88 @@ def scan_token_usage_seconds(
         except OSError:
             continue
         provider_key = "unknown"
-        final: dict[str, int] | None = None
+        snapshots: list[tuple[float, dict[str, int]]] = []
         try:
             with path.open("r", encoding="utf-8", errors="replace") as stream:
                 for line in stream:
-                    if '"session_meta"' in line:
-                        try:
-                            event = json.loads(line)
-                            if event.get("type") == "session_meta":
-                                value = event.get("payload", {}).get("model_provider")
-                                if isinstance(value, str) and value:
-                                    provider_key = value
-                        except (json.JSONDecodeError, AttributeError):
+                    try:
+                        event = json.loads(line)
+                        if event.get("type") == "session_meta":
+                            value = event.get("payload", {}).get("model_provider")
+                            if isinstance(value, str) and value:
+                                provider_key = value
                             continue
-                    elif '"token_count"' in line:
-                        try:
-                            event = json.loads(line)
-                            payload = event.get("payload", {})
-                            if event.get("type") != "event_msg" or payload.get("type") != "token_count":
-                                continue
-                            totals = payload.get("info", {}).get("total_token_usage")
-                            if isinstance(totals, dict):
-                                final = {
-                                    key: int(totals.get(key, 0) or 0)
-                                    for key in (
-                                        "input_tokens",
-                                        "cached_input_tokens",
-                                        "output_tokens",
-                                        "reasoning_output_tokens",
-                                        "total_tokens",
-                                    )
-                                }
-                        except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                        payload = event.get("payload", {})
+                        if event.get("type") != "event_msg" or payload.get("type") != "token_count":
                             continue
+                        totals = payload.get("info", {}).get("total_token_usage")
+                        if not isinstance(totals, dict):
+                            continue
+                        values = {
+                            key: max(0, int(totals.get(key, 0) or 0))
+                            for key in (
+                                "input_tokens",
+                                "cached_input_tokens",
+                                "output_tokens",
+                                "reasoning_output_tokens",
+                            )
+                        }
+                        total = max(0, int(totals.get("total_tokens", 0) or 0))
+                        if total == 0:
+                            # Some compatible gateways omit total_tokens.  The
+                            # Codex total is input plus output; cached input is
+                            # already included in input and must not be added twice.
+                            total = values["input_tokens"] + values["output_tokens"]
+                        values["total_tokens"] = total
+                        timestamp = event.get("timestamp")
+                        try:
+                            event_time = datetime.fromisoformat(str(timestamp)).timestamp()
+                        except (TypeError, ValueError, OverflowError):
+                            event_time = mtime
+                        snapshots.append((event_time, values))
+                    except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                        continue
         except OSError:
             continue
-        if final is None:
+        if not snapshots:
             continue
-        attribution = "provider_key"
-        owner = provider_key
-        if timeline:
-            idx = bisect.bisect_right(timeline_times, mtime) - 1
-            if idx >= 0 and timeline[idx][1]:
-                attribution = "timeline"
-                owner = timeline[idx][1]
-            else:
-                owner = "unknown"
-        item = usage.get(owner)
-        if item is None:
-            item = TokenUsage(owner, attribution=attribution, model_provider=provider_key)
-            usage[owner] = item
-        item.input_tokens += final["input_tokens"]
-        item.cached_input_tokens += final["cached_input_tokens"]
-        item.output_tokens += final["output_tokens"]
-        item.reasoning_output_tokens += final["reasoning_output_tokens"]
-        item.total_tokens += final["total_tokens"]
-        item.sessions += 1
+        snapshots.sort(key=lambda item: item[0])
+        previous = {key: 0 for key in snapshots[0][1]}
+        session_owners: set[str] = set()
+        for event_time, current in snapshots:
+            if event_time < cutoff:
+                previous = current
+                continue
+            delta: dict[str, int] = {}
+            for key, value in current.items():
+                # total_token_usage is cumulative for the session.  If a
+                # gateway resets the counter, treat the new value as a fresh
+                # increment instead of producing a negative total.
+                delta[key] = value - previous.get(key, 0)
+                if delta[key] < 0:
+                    delta[key] = value
+            previous = current
+            if delta["total_tokens"] <= 0:
+                continue
+            attribution = "provider_key"
+            owner = provider_key
+            if timeline:
+                idx = bisect.bisect_right(timeline_times, event_time) - 1
+                if idx >= 0 and timeline[idx][1]:
+                    attribution = "timeline"
+                    owner = timeline[idx][1]
+                else:
+                    owner = "unknown"
+            item = usage.get(owner)
+            if item is None:
+                item = TokenUsage(owner, attribution=attribution, model_provider=provider_key)
+                usage[owner] = item
+            item.input_tokens += delta["input_tokens"]
+            item.cached_input_tokens += delta["cached_input_tokens"]
+            item.output_tokens += delta["output_tokens"]
+            item.reasoning_output_tokens += delta["reasoning_output_tokens"]
+            item.total_tokens += delta["total_tokens"]
+            session_owners.add(owner)
+        for owner in session_owners:
+            usage[owner].sessions += 1
     return usage
