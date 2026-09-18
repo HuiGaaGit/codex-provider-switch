@@ -1,8 +1,8 @@
 #define MyAppName "Codex Provider Switch"
-#define MyAppVersion "1.2.19"
+#define MyAppVersion "1.2.21"
 #define MyAppExeName "Codex Provider Switch.exe"
-#define MySetupName "Codex Provider Switch-Setup-1.2.19"
-#define SourceExe "..\..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.19.exe"
+#define MySetupName "Codex Provider Switch-Setup-1.2.21"
+#define SourceExe "..\..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.21.exe"
 
 [Setup]
 AppId={{752780BD-6C48-4826-B864-23163B28BCE7}
@@ -26,7 +26,7 @@ WizardStyle=modern
 CloseApplications=yes
 CloseApplicationsFilter=Codex Provider Switch.exe
 RestartApplications=no
-VersionInfoVersion=1.2.19.0
+VersionInfoVersion=1.2.21.0
 VersionInfoDescription=Codex Provider Switch installer
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
@@ -46,3 +46,5 @@ Name: "{userstartup}\{#MyAppName} 后台监控"; Filename: "{app}\{#MyAppExeName
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+

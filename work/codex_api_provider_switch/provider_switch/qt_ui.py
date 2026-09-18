@@ -993,10 +993,6 @@ class ProviderSwitchWindow(QMainWindow):
         self._timeline_labels: list[str] = []
         self._timeline_widget = MonitorTimelineWidget()
         timeline_layout.addWidget(self._timeline_widget, 1)
-        self._monitor_latency_detail = QLabel("最近请求响应时间：暂无记录")
-        self._monitor_latency_detail.setProperty("class", "muted")
-        self._monitor_latency_detail.setWordWrap(True)
-        timeline_layout.addWidget(self._monitor_latency_detail)
         layout.addWidget(timeline_panel, 1)
 
         # Token usage gauges
@@ -1091,7 +1087,13 @@ class ProviderSwitchWindow(QMainWindow):
         summaries = self.monitor_history.summarize(records, profile_ids)
         availabilities = [s.availability for s in summaries.values() if s.availability is not None]
         overall_avail = sum(availabilities) / len(availabilities) if availabilities else None
-        latencies = [s.avg_latency_ms for s in summaries.values() if s.avg_latency_ms is not None]
+        # CCH-style average: total valid first-token latency divided by the
+        # number of requests, rather than averaging provider averages.
+        latencies = [
+            item.latency_ms
+            for item in records
+            if item.state == "healthy" and item.latency_ms is not None and item.latency_ms >= 0
+        ]
         overall_latency = sum(latencies) / len(latencies) if latencies else None
         errors = [s.error_rate for s in summaries.values() if s.error_rate is not None]
         overall_error = sum(errors) / len(errors) if errors else None
@@ -1117,21 +1119,6 @@ class ProviderSwitchWindow(QMainWindow):
             profile = self.controller.settings.profiles.get(pid)
             label = profile.display_name if profile else pid
             self._timeline_widget.set_provider(pid, label, buckets)
-        recent = records[-3:]
-        if recent:
-            lines = []
-            labels = {
-                pid: self.controller.settings.profiles[pid].display_name
-                for pid in profile_ids
-                if pid in self.controller.settings.profiles
-            }
-            for item in reversed(recent):
-                stamp = datetime.fromtimestamp(item.timestamp).strftime("%H:%M:%S")
-                latency = f"{item.latency_ms / 1000:,.2f} 秒" if item.latency_ms is not None else "耗时未知"
-                lines.append(f"{stamp}  {labels.get(item.profile_id, item.profile_id)}  {latency}")
-            self._monitor_latency_detail.setText("最近请求响应时间：\n" + "\n".join(lines))
-        else:
-            self._monitor_latency_detail.setText("最近请求响应时间：暂无记录")
         self._timeline_widget.repaint()
 
     def _record_monitor_history(self, telemetry: dict[str, ProviderTelemetry]) -> None:
