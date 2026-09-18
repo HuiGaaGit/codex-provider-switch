@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication,
@@ -483,15 +483,14 @@ class TokenGaugeWidget(QWidget):
         rect = QRectF(margin, margin, w - 2 * margin, gauge_h * 2)
         pen_width = 9
         # Background arc (full semicircle)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        from PySide6.QtGui import QPen
-        bg_pen = QPen(QColor(255, 255, 255, 30), pen_width, Qt.PenCapStyle.RoundCap)
+        bg_pen = QPen(QColor(255, 255, 255, 30), pen_width)
+        bg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(bg_pen)
         painter.drawArc(rect, 0, 180 * 16)
         # Foreground arc (ratio)
         if self._ratio > 0.001:
-            fg_pen = QPen(self._color, pen_width, Qt.PenCapStyle.RoundCap)
+            fg_pen = QPen(self._color, pen_width)
+            fg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(fg_pen)
             span = int(180 * 16 * self._ratio)
             painter.drawArc(rect, 180 * 16, -span)
@@ -1886,7 +1885,9 @@ class ProviderSwitchWindow(QMainWindow):
         if self._monitoring_in_progress:
             return
         self._monitoring_in_progress = True
-        self._set_busy(True, "正在检查当前供应商链路")
+        self._busy_count += 1
+        self.refresh_button.setEnabled(False)
+        self.active_header.set_tone("warning", "检查中")
         self._run_job(
             self._collect_monitoring,
             self._handle_monitoring_snapshot,
@@ -1909,7 +1910,12 @@ class ProviderSwitchWindow(QMainWindow):
 
     def _handle_telemetry(self, telemetry: dict[str, ProviderTelemetry]) -> None:
         self._monitoring_in_progress = False
-        self._set_busy(False, "健康监控已更新")
+        self._busy_count = max(0, self._busy_count - 1)
+        self.refresh_button.setEnabled(self._busy_count == 0)
+        if self._busy_count:
+            self.active_header.set_tone("warning", "处理中")
+        else:
+            self.active_header.set_tone("success", "监控在线")
         for profile_id, card in self.provider_cards.items():
             card.set_telemetry(telemetry.get(profile_id))
         bad = [item.health.message for item in telemetry.values() if item.health.state in {"offline", "auth_error"}]
@@ -1958,7 +1964,8 @@ class ProviderSwitchWindow(QMainWindow):
 
     def _handle_monitoring_error(self, exc: BaseException) -> None:
         self._monitoring_in_progress = False
-        self._set_busy(False, "健康监控失败")
+        self._busy_count = max(0, self._busy_count - 1)
+        self.refresh_button.setEnabled(self._busy_count == 0)
         self.alert_text.setText(f"监控失败：{exc}")
 
     def confirm_switch(self, profile_id: str) -> None:
