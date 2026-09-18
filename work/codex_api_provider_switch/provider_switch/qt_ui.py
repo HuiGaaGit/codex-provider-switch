@@ -8,7 +8,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
@@ -146,15 +146,15 @@ class ProviderCard(GlassPanel):
         self.profile_id = profile_id
         # Keep the four cards aligned while allowing the surrounding page to
         # scroll when the window is made smaller than the preferred layout.
-        self.setMinimumHeight(204)
+        self.setMinimumHeight(154)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 14, 18, 14)
-        root.setSpacing(8)
+        root.setContentsMargins(14, 10, 14, 10)
+        root.setSpacing(5)
         heading = QHBoxLayout()
         self.mark = QLabel(profile_id[:1].upper())
-        self.mark.setFixedSize(38, 38)
+        self.mark.setFixedSize(34, 34)
         self.mark.setAlignment(Qt.AlignCenter)
         self.mark.setStyleSheet(
             f"background:{PROFILE_COLORS[profile_id]}; color:#172025; border-radius:10px; font-weight:800;"
@@ -176,7 +176,7 @@ class ProviderCard(GlassPanel):
         self.health = QLabel("等待首次健康检查")
         self.health.setProperty("class", "body")
         self.health.setWordWrap(True)
-        self.health.setMinimumHeight(26)
+        self.health.setMinimumHeight(21)
         root.addWidget(self.health)
 
         self.usage = QLabel("近 30 天用量：暂无数据")
@@ -193,7 +193,7 @@ class ProviderCard(GlassPanel):
         self.quota_text = QLabel("额度：未查询")
         self.quota_text.setProperty("class", "muted")
         self.quota_text.setWordWrap(True)
-        self.quota_text.setMinimumHeight(24)
+        self.quota_text.setMinimumHeight(18)
         root.addWidget(self.quota_text)
         root.addStretch(1)
 
@@ -557,7 +557,7 @@ class ProviderSwitchWindow(QMainWindow):
         self.app_icon = QIcon(str(resource_path("assets/codex_api_provider_switch_icon.png")))
         if not self.app_icon.isNull():
             self.setWindowIcon(self.app_icon)
-        self.setMinimumSize(1040, 700)
+        self.setMinimumSize(900, 620)
         self.resize(1220, 790)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -568,6 +568,9 @@ class ProviderSwitchWindow(QMainWindow):
         self._monitoring_in_progress = False
         self._local_refresh_in_progress = False
         self._drag_origin: QPoint | None = None
+        self._resize_origin: QPoint | None = None
+        self._resize_geometry: Any = None
+        self._resize_edges: tuple[bool, bool, bool, bool] | None = None
         self._force_exit = False
         self._tray_hint_shown = False
         self._last_tray_issues: tuple[str, ...] = ()
@@ -585,6 +588,9 @@ class ProviderSwitchWindow(QMainWindow):
         )
 
         self._build_shell()
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
         self._build_dashboard()
         self._build_monitoring_page()
         self._build_providers_page()
@@ -775,6 +781,64 @@ class ProviderSwitchWindow(QMainWindow):
             self._drag_origin = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
         super().mousePressEvent(event)
 
+    def _resize_edges_at(self, point: QPoint) -> tuple[bool, bool, bool, bool]:
+        edge = 9
+        return (
+            point.x() <= edge,
+            point.x() >= self.width() - edge,
+            point.y() <= edge,
+            point.y() >= self.height() - edge,
+        )
+
+    def _resize_cursor(self, edges: tuple[bool, bool, bool, bool]) -> Qt.CursorShape:
+        left, right, top, bottom = edges
+        if (left and top) or (right and bottom):
+            return Qt.SizeFDiagCursor
+        if (right and top) or (left and bottom):
+            return Qt.SizeBDiagCursor
+        if left or right:
+            return Qt.SizeHorCursor
+        if top or bottom:
+            return Qt.SizeVerCursor
+        return Qt.ArrowCursor
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if isinstance(watched, QWidget) and (watched is self or self.isAncestorOf(watched)):
+            if event.type() == QEvent.MouseMove:
+                point = self.mapFromGlobal(watched.mapToGlobal(event.position().toPoint()))
+                if self._resize_origin is not None and self._resize_geometry is not None:
+                    delta = event.globalPosition().toPoint() - self._resize_origin
+                    left, right, top, bottom = self._resize_edges or (False, False, False, False)
+                    geometry = self._resize_geometry
+                    x, y, width, height = geometry.x(), geometry.y(), geometry.width(), geometry.height()
+                    if left:
+                        width = max(self.minimumWidth(), geometry.width() - delta.x())
+                        x = geometry.right() - width + 1
+                    if right:
+                        width = max(self.minimumWidth(), geometry.width() + delta.x())
+                    if top:
+                        height = max(self.minimumHeight(), geometry.height() - delta.y())
+                        y = geometry.bottom() - height + 1
+                    if bottom:
+                        height = max(self.minimumHeight(), geometry.height() + delta.y())
+                    self.setGeometry(x, y, width, height)
+                    return True
+                self.setCursor(self._resize_cursor(self._resize_edges_at(point)))
+            elif event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                point = self.mapFromGlobal(watched.mapToGlobal(event.position().toPoint()))
+                edges = self._resize_edges_at(point)
+                if any(edges):
+                    self._resize_edges = edges
+                    self._resize_origin = event.globalPosition().toPoint()
+                    self._resize_geometry = self.geometry()
+                    return True
+            elif event.type() == QEvent.MouseButtonRelease and self._resize_origin is not None:
+                self._resize_origin = None
+                self._resize_geometry = None
+                self._resize_edges = None
+                return True
+        return super().eventFilter(watched, event)
+
     def mouseMoveEvent(self, event: Any) -> None:
         if self._drag_origin is not None and event.buttons() & Qt.LeftButton:
             self.move(event.globalPosition().toPoint() - self._drag_origin)
@@ -829,6 +893,7 @@ class ProviderSwitchWindow(QMainWindow):
             "供应商总览",
             "一眼查看当前路由、当前链路健康、额度和本地会话用量",
         )
+        layout.setSpacing(8)
         self.dashboard_summary = QLabel("正在读取 Codex 配置…")
         self.dashboard_summary.setProperty("class", "body")
         layout.addWidget(self.dashboard_summary)
@@ -836,7 +901,7 @@ class ProviderSwitchWindow(QMainWindow):
         self.cards_grid = QGridLayout(cards)
         self.cards_grid.setContentsMargins(0, 0, 0, 0)
         self.cards_grid.setHorizontalSpacing(12)
-        self.cards_grid.setVerticalSpacing(12)
+        self.cards_grid.setVerticalSpacing(8)
         for index, profile_id in enumerate(("openai", "relay1", "relay2", "glm")):
             card = ProviderCard(profile_id)
             card.switch_requested.connect(self.confirm_switch)
@@ -847,7 +912,7 @@ class ProviderSwitchWindow(QMainWindow):
         bottom = QHBoxLayout()
         self.token_summary = GlassPanel()
         token_layout = QVBoxLayout(self.token_summary)
-        token_layout.setContentsMargins(16, 13, 16, 13)
+        token_layout.setContentsMargins(12, 9, 12, 9)
         token_layout.addWidget(self._section_title("本地 Token 统计"))
         self.token_text = QLabel("暂无会话数据")
         self.token_text.setProperty("class", "body")
@@ -855,7 +920,7 @@ class ProviderSwitchWindow(QMainWindow):
         token_layout.addWidget(self.token_text)
         self.alert_summary = GlassPanel()
         alert_layout = QVBoxLayout(self.alert_summary)
-        alert_layout.setContentsMargins(16, 13, 16, 13)
+        alert_layout.setContentsMargins(12, 9, 12, 9)
         alert_layout.addWidget(self._section_title("操作提示"))
         self.alert_text = QLabel("健康详情集中在“监控面板”；切换完成后会按需检查当前供应商。")
         self.alert_text.setProperty("class", "body")

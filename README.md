@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.2.11`
+当前交付版本：`1.2.12`
 
 ## 日常使用
 
@@ -83,10 +83,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.2.11.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.2.11.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.2.11.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.2.11.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.2.12.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.2.12.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.2.12.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.2.12.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -97,26 +97,28 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.2.11.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.2.11.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.2.12.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.2.12.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.11.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.11.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.11.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.12.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.12.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.12.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
-## 1.2.11 变更
+## 1.2.12 变更
 
 - 统一官方登录态文案：auth 仅用于 OpenAI 直连，API1、API2、GLM 使用各自独立 API Key。
 - 修复未分类凭据或 API Key 登录误解锁 OpenAI 直连的问题。
 - 当前供应商健康检查、额度和旧遥测状态按实际 `config.toml` 路由刷新，避免显示过期供应商数据。
 - 总览、监控、部署与设置页支持小窗口滚动，供应商卡片和右下角缩放控件不再裁切。
 - 修复监控面板可用性时间线最后一行 GLM 被面板高度裁切的问题。
+- 压缩总览卡片和底部摘要模块，默认窗口无需上下滚动即可查看完整内容。
+- 无边框窗口支持从边缘和四个角自由调整宽度与高度。
 
 ## 1.2.1 变更
 
