@@ -12,7 +12,7 @@ from .codex_process import CodexProcessController
 from .config_manager import ConfigManager, discover_codex_homes
 from .constants import SWITCH_LOG_NAME
 from .models import AppSettings, ConfigSnapshot, ProviderTelemetry, TokenUsage
-from .monitoring import check_all, scan_token_usage
+from .monitoring import check_all, check_provider, scan_token_usage
 from .settings import SettingsError, SettingsStore, validate_settings
 from .thread_state import ThreadStateError, sync_thread_models
 from .threadripper import find_threadripper, sync_history, threadripper_version
@@ -335,6 +335,27 @@ class ApplicationController:
             self.codex_home,
             self.settings.retain_official_auth,
         )
+
+    def check_active(self) -> dict[str, ProviderTelemetry]:
+        """Only health-check the currently active provider (CCH-style on-demand probe)."""
+        active_id = self.settings.active_profile_id or "openai"
+        profile = self.settings.profiles.get(active_id)
+        if profile is None:
+            return {}
+        auth_status: AuthStatus | None = None
+        if profile.kind == "official":
+            auth_status = self.auth_status()
+        try:
+            item = check_provider(
+                profile,
+                self.credentials.get(profile.profile_id, ""),
+                codex_home=self.codex_home,
+                retain_official_auth=self.settings.retain_official_auth,
+                auth_status=auth_status,
+            )
+        except Exception:
+            return {}
+        return {profile.profile_id: item}
 
     def token_usage(self) -> dict[str, TokenUsage]:
         return scan_token_usage(self.codex_home, self.settings.usage_lookback_days)

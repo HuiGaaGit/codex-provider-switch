@@ -28,6 +28,8 @@ class ProviderProfile:
     quota_total_path: str = ""
     quota_organization_id: str = ""
     quota_project_id: str = ""
+    price_per_m_input: float = 0.0
+    price_per_m_output: float = 0.0
     enabled: bool = True
 
     def to_dict(self) -> dict[str, Any]:

@@ -453,6 +453,67 @@ class MonitorTimelineWidget(QWidget):
         return QSize(600, len(self._providers) * 34 + 20)
 
 
+class TokenGaugeWidget(QWidget):
+    """Semicircular gauge showing token usage relative to peers."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._label = ""
+        self._tokens = 0
+        self._ratio = 0.0
+        self._color = QColor("#71d3ae")
+        self._sessions = 0
+        self.setMinimumSize(150, 130)
+
+    def set_data(self, label: str, tokens: int, ratio: float, color: str, sessions: int) -> None:
+        self._label = label
+        self._tokens = tokens
+        self._ratio = max(0.0, min(1.0, ratio))
+        self._color = QColor(color)
+        self._sessions = sessions
+        self.update()
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w = self.width()
+        h = self.height()
+        margin = 10
+        gauge_h = h * 0.52
+        rect = QRectF(margin, margin, w - 2 * margin, gauge_h * 2)
+        pen_width = 9
+        # Background arc (full semicircle)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        from PySide6.QtGui import QPen
+        bg_pen = QPen(QColor(255, 255, 255, 30), pen_width, Qt.PenCapStyle.RoundCap)
+        painter.setPen(bg_pen)
+        painter.drawArc(rect, 0, 180 * 16)
+        # Foreground arc (ratio)
+        if self._ratio > 0.001:
+            fg_pen = QPen(self._color, pen_width, Qt.PenCapStyle.RoundCap)
+            painter.setPen(fg_pen)
+            span = int(180 * 16 * self._ratio)
+            painter.drawArc(rect, 180 * 16, -span)
+        # Center text
+        painter.setPen(QColor("#ffffff"))
+        painter.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
+        center_y = margin + gauge_h + 4
+        painter.drawText(QRectF(0, center_y, w, 24), Qt.AlignHCenter | Qt.AlignVCenter, _format_int(self._tokens))
+        painter.setPen(QColor("#8fa0aa"))
+        painter.setFont(QFont("Segoe UI", 8))
+        painter.drawText(QRectF(0, center_y + 22, w, 16), Qt.AlignHCenter | Qt.AlignVCenter, "tokens")
+        # Bottom label
+        painter.setPen(QColor("#c8d0d4"))
+        painter.setFont(QFont("Segoe UI", 9, QFont.Weight.Medium))
+        painter.drawText(QRectF(0, h - 22, w, 18), Qt.AlignHCenter | Qt.AlignVCenter, self._label)
+        if self._sessions > 0:
+            painter.setPen(QColor("#687178"))
+            painter.setFont(QFont("Segoe UI", 7))
+            painter.drawText(QRectF(0, h - 12, w, 12), Qt.AlignHCenter | Qt.AlignVCenter, f"{self._sessions} 会话")
+        painter.end()
+
+
 class ProviderSwitchWindow(QMainWindow):
     def __init__(
         self,
@@ -507,9 +568,6 @@ class ProviderSwitchWindow(QMainWindow):
         self.job_timer = QTimer(self)
         self.job_timer.timeout.connect(self._drain_jobs)
         self.job_timer.start(90)
-        self.monitor_timer = QTimer(self)
-        self.monitor_timer.timeout.connect(self.refresh_monitoring)
-        self.monitor_timer.start(max(10, self.controller.settings.monitor_interval_seconds) * 1000)
         if start_monitor:
             QTimer.singleShot(250, self.refresh_monitoring)
         if show_wizard and not self.controller.settings.setup_complete:
@@ -816,15 +874,46 @@ class ProviderSwitchWindow(QMainWindow):
         timeline_layout.addWidget(self._timeline_widget, 1)
         layout.addWidget(timeline_panel, 1)
 
-        # Token usage table
+        # Token usage gauges
         token_panel = GlassPanel()
         token_layout = QVBoxLayout(token_panel)
         token_layout.setContentsMargins(16, 13, 16, 13)
-        token_layout.addWidget(self._section_title("供应商 Token 使用量"))
-        self.monitor_token_text = QLabel("等待监控刷新…")
-        self.monitor_token_text.setProperty("class", "body")
-        self.monitor_token_text.setWordWrap(True)
-        token_layout.addWidget(self.monitor_token_text)
+        token_header = QHBoxLayout()
+        token_header.addWidget(self._section_title("供应商 Token 使用量"))
+        token_header.addStretch(1)
+        self._token_range_group = QButtonGroup(self)
+        self._token_range_group.setExclusive(True)
+        token_ranges = (
+            ("15m", 15 * 60),
+            ("1h", 3600),
+            ("6h", 6 * 3600),
+            ("24h", 24 * 3600),
+            ("7d", 7 * 86400),
+            ("30d", 30 * 86400),
+        )
+        self._token_range_seconds: dict[str, float] = {}
+        for label, seconds in token_ranges:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFixedHeight(26)
+            btn.setProperty("class", "chip")
+            btn.clicked.connect(lambda checked=False: self._refresh_token_gauges())
+            self._token_range_group.addButton(btn)
+            token_header.addWidget(btn)
+            self._token_range_seconds[label] = seconds
+            if seconds == 86400:
+                btn.setChecked(True)
+        token_layout.addLayout(token_header)
+        self.token_gauges_grid = QHBoxLayout()
+        self.token_gauges_grid.setSpacing(10)
+        self._token_gauge_widgets: dict[str, TokenGaugeWidget] = {}
+        gauge_colors = {"openai": "#138a68", "relay1": "#1879b8", "relay2": "#c06a1b", "glm": "#7257b5"}
+        for pid in ("openai", "relay1", "relay2", "glm"):
+            gauge = TokenGaugeWidget()
+            gauge.set_data("", 0, 0.0, gauge_colors[pid], 0)
+            self._token_gauge_widgets[pid] = gauge
+            self.token_gauges_grid.addWidget(gauge, 1)
+        token_layout.addLayout(self.token_gauges_grid)
         layout.addWidget(token_panel)
 
     def _monitor_stat_card(self, title: str, initial: str) -> GlassPanel:
@@ -898,19 +987,38 @@ class ProviderSwitchWindow(QMainWindow):
         self._refresh_monitor_page()
 
     def _update_monitor_tokens(self, usage: dict[str, TokenUsage]) -> None:
-        days = self.controller.settings.usage_lookback_days
-        parts = []
-        for pid in ("openai", "relay1", "relay2", "glm"):
-            profile = self.controller.settings.profiles.get(pid)
-            if profile is None:
-                continue
-            item = usage.get(profile.provider_key)
-            label = profile.display_name
-            if item and item.total_tokens > 0:
-                parts.append(f"{label} {_format_int(item.total_tokens)}")
-            else:
-                parts.append(f"{label} --")
-        self.monitor_token_text.setText(f"近 {days} 天  ·  " + "  ·  ".join(parts))
+        self._latest_full_usage = usage
+        self._refresh_token_gauges()
+
+    def _refresh_token_gauges(self) -> None:
+        from .monitoring import scan_token_usage_seconds
+        checked = self._token_range_group.checkedButton()
+        seconds = 86400.0
+        if checked is not None:
+            seconds = self._token_range_seconds.get(checked.text(), 86400.0)
+        codex_home = self.controller.codex_home
+
+        def worker() -> dict[str, TokenUsage]:
+            return scan_token_usage_seconds(codex_home, seconds)
+
+        def done(result: dict[str, TokenUsage] | BaseException) -> None:
+            if isinstance(result, BaseException):
+                return
+            usage = result
+            max_tokens = max((u.total_tokens for u in usage.values()), default=0)
+            colors = {"openai": "#138a68", "relay1": "#1879b8", "relay2": "#c06a1b", "glm": "#7257b5"}
+            for pid in ("openai", "relay1", "relay2", "glm"):
+                profile = self.controller.settings.profiles.get(pid)
+                gauge = self._token_gauge_widgets.get(pid)
+                if profile is None or gauge is None:
+                    continue
+                item = usage.get(profile.provider_key)
+                tokens = item.total_tokens if item else 0
+                sessions = item.sessions if item else 0
+                ratio = (tokens / max_tokens) if max_tokens > 0 else 0.0
+                gauge.set_data(profile.display_name, tokens, ratio, colors[pid], sessions)
+
+        self._run_job(worker, done)
 
     def _build_providers_page(self) -> None:
         page, layout = self._page(
@@ -1608,7 +1716,6 @@ class ProviderSwitchWindow(QMainWindow):
 
     def _handle_general_settings_saved(self, config_path: str) -> None:
         self.save_general_button.setEnabled(True)
-        self.monitor_timer.setInterval(self.controller.settings.monitor_interval_seconds * 1000)
         self._set_busy(False, "通用设置已保存")
         self.refresh_deployment_view()
         self.refresh_all(local_only=True)
@@ -1633,7 +1740,6 @@ class ProviderSwitchWindow(QMainWindow):
             self.controller.settings.monitor_interval_seconds = self.monitor_spin.value()
             self.controller.settings.usage_lookback_days = self.lookback_spin.value()
             self.controller.save()
-            self.monitor_timer.setInterval(self.controller.settings.monitor_interval_seconds * 1000)
             self.refresh_deployment_view()
             self.refresh_all(local_only=True)
             self._set_footer("通用设置已保存")
@@ -1780,7 +1886,7 @@ class ProviderSwitchWindow(QMainWindow):
         if self._monitoring_in_progress:
             return
         self._monitoring_in_progress = True
-        self._set_busy(True, "正在检查供应商健康与额度")
+        self._set_busy(True, "正在检查当前供应商链路")
         self._run_job(
             self._collect_monitoring,
             self._handle_monitoring_snapshot,
@@ -1790,7 +1896,7 @@ class ProviderSwitchWindow(QMainWindow):
     def _collect_monitoring(
         self,
     ) -> tuple[dict[str, ProviderTelemetry], dict[str, TokenUsage]]:
-        return self.controller.telemetry(), self.controller.token_usage()
+        return self.controller.check_active(), self.controller.token_usage()
 
     def _handle_monitoring_snapshot(
         self,
@@ -1884,6 +1990,7 @@ class ProviderSwitchWindow(QMainWindow):
         self._set_busy(False, f"已切换到 {self.controller.settings.profiles[result.profile_id].display_name}")
         self.refresh_all(local_only=True)
         self.refresh_deployment_view()
+        QTimer.singleShot(400, self.refresh_monitoring)
         if result.warnings:
             QMessageBox.information(self, "切换完成", "\n".join(result.warnings))
 

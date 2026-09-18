@@ -337,7 +337,11 @@ def check_all(
 
 
 def scan_token_usage(codex_home: Path, lookback_days: int = 30) -> dict[str, TokenUsage]:
-    cutoff = datetime.now().timestamp() - timedelta(days=max(1, lookback_days)).total_seconds()
+    return scan_token_usage_seconds(codex_home, lookback_days * 86400)
+
+
+def scan_token_usage_seconds(codex_home: Path, lookback_seconds: float = 30 * 86400) -> dict[str, TokenUsage]:
+    cutoff = datetime.now().timestamp() - max(60.0, lookback_seconds)
     roots = [codex_home / "sessions", codex_home / "archived_sessions"]
     files: list[Path] = []
     for root in roots:
