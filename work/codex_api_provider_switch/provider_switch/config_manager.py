@@ -159,6 +159,89 @@ def _remove_provider_table_keys(text: str, provider_key: str, keys: tuple[str, .
     return "".join(lines)
 
 
+def _split_inline_items(body: str) -> list[str]:
+    """Split a TOML inline table without breaking quoted commas."""
+    items: list[str] = []
+    start = 0
+    quote = ""
+    escaped = False
+    depth = 0
+    for index, char in enumerate(body):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if char in {'"', "'"}:
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth = max(0, depth - 1)
+        elif char == "," and depth == 0:
+            item = body[start:index].strip()
+            if item:
+                items.append(item)
+            start = index + 1
+    item = body[start:].strip()
+    if item:
+        items.append(item)
+    return items
+
+
+def _is_auth_header_key(key: str) -> bool:
+    normalized = key.strip().strip('"').strip("'").casefold().replace("_", "-")
+    return (
+        "authorization" in normalized
+        or "api-key" in normalized
+        or "apikey" in normalized
+        or "bearer" in normalized
+        or normalized in {"token", "access-token", "x-token"}
+    )
+
+
+def _remove_provider_auth_fields(
+    text: str,
+    provider_key: str,
+    *,
+    remove_credentials: bool = True,
+    remove_headers: bool = False,
+) -> str:
+    """Remove managed credentials while preserving unrelated provider options."""
+    updated = (
+        _remove_provider_table_keys(text, provider_key, ("experimental_bearer_token", "env_key"))
+        if remove_credentials
+        else _remove_provider_table_keys(text, provider_key, ("env_key",))
+    )
+    if not remove_headers:
+        return updated
+    lines = updated.splitlines(keepends=True)
+    bounds = _table_bounds(lines, f"model_providers.{provider_key}")
+    if bounds is None:
+        return updated
+    start, end = bounds
+    matcher = re.compile(r"^(?P<indent>\s*)http_headers\s*=\s*\{(?P<body>.*)\}(?P<ending>\r?\n)?\s*$")
+    for index in range(end - 1, start, -1):
+        match = matcher.match(lines[index])
+        if not match:
+            continue
+        kept: list[str] = []
+        for item in _split_inline_items(match.group("body")):
+            key = item.split("=", 1)[0].strip() if "=" in item else item
+            if not _is_auth_header_key(key):
+                kept.append(item)
+        if kept:
+            ending = match.group("ending") or "\n"
+            lines[index] = f"{match.group('indent')}http_headers = {{ {', '.join(kept)} }}{ending}"
+        else:
+            del lines[index]
+        break
+    return "".join(lines)
+
+
 class ConfigManager:
     def __init__(self, codex_home: Path) -> None:
         self.codex_home = codex_home.expanduser().resolve(strict=False)
@@ -246,9 +329,7 @@ class ConfigManager:
                 updated = _set_top_level(updated, "model", profile.model)
             updated = _set_top_level(updated, "model_catalog_json", None)
             for key in clear_other_keys or []:
-                updated = _remove_provider_table_keys(
-                    updated, key, ("experimental_bearer_token", "env_key", "http_headers")
-                )
+                updated = _remove_provider_auth_fields(updated, key, remove_headers=True)
             return updated, "openai"
         if not profile.base_url:
             raise ConfigError(f"{profile.display_name} 尚未配置 API 地址。")
@@ -282,11 +363,11 @@ class ConfigManager:
         # actor headers from copied configs.
         updated = _remove_provider_table_keys(updated, provider_key, ("env_key",))
         if profile.kind == "glm":
-            updated = _remove_provider_table_keys(updated, provider_key, ("http_headers",))
-        for key in clear_other_keys or []:
-            updated = _remove_provider_table_keys(
-                updated, key, ("experimental_bearer_token", "env_key", "http_headers")
+            updated = _remove_provider_auth_fields(
+                updated, provider_key, remove_credentials=False, remove_headers=True
             )
+        for key in clear_other_keys or []:
+            updated = _remove_provider_auth_fields(updated, key, remove_headers=True)
         self._validate_rendered(updated, provider_key)
         return updated, provider_key
 
@@ -351,9 +432,7 @@ class ConfigManager:
             original, encoding = self.read()
             updated = original
             for key in keys:
-                stripped = _remove_provider_table_keys(
-                    updated, key, ("experimental_bearer_token", "env_key", "http_headers")
-                )
+                stripped = _remove_provider_auth_fields(updated, key, remove_headers=True)
                 if stripped != updated:
                     cleared.append(key)
                 updated = stripped

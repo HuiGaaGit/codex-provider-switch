@@ -89,6 +89,8 @@ class MonitorHistory:
         self, records: list[HealthRecord], profile_ids: list[str]
     ) -> dict[str, ProviderSummary]:
         result = {pid: ProviderSummary(profile_id=pid) for pid in profile_ids}
+        latency_totals: dict[str, int] = {}
+        latency_counts: dict[str, int] = {}
         for rec in records:
             entry = result.get(rec.profile_id)
             if entry is None:
@@ -97,14 +99,14 @@ class MonitorHistory:
             entry.total_checks += 1
             if rec.state in {"healthy", "warning"}:
                 entry.healthy_checks += 1
-            elif rec.state in {"offline", "auth_error"}:
+            elif rec.state in {"offline", "auth_error", "unconfigured"}:
                 entry.error_checks += 1
             if rec.latency_ms is not None:
-                if entry.avg_latency_ms is None:
-                    entry.avg_latency_ms = float(rec.latency_ms)
-                else:
-                    total = entry.avg_latency_ms * (entry.total_checks - 1) + rec.latency_ms
-                    entry.avg_latency_ms = total / entry.total_checks
+                latency_totals[rec.profile_id] = latency_totals.get(rec.profile_id, 0) + rec.latency_ms
+                latency_counts[rec.profile_id] = latency_counts.get(rec.profile_id, 0) + 1
+                entry.avg_latency_ms = (
+                    latency_totals[rec.profile_id] / latency_counts[rec.profile_id]
+                )
         return result
 
     def timeline_buckets(
@@ -128,7 +130,7 @@ class MonitorHistory:
                     state = "up"
                 elif rec.state in {"warning"}:
                     state = "warn"
-                elif rec.state in {"offline", "auth_error"}:
+                elif rec.state in {"offline", "auth_error", "unconfigured"}:
                     state = "down"
                 else:
                     state = "none"

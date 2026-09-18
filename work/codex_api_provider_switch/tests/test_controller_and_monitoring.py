@@ -6,10 +6,10 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from provider_switch.controller import ApplicationController
-from provider_switch.models import AppSettings, ConfigSnapshot
-from provider_switch.models import ProviderProfile, QuotaWindow
+from provider_switch.models import AppSettings, ConfigSnapshot, HealthResult, ProviderProfile, ProviderTelemetry, QuotaWindow
 from provider_switch.ui import format_tokens
 from provider_switch.qt_ui import _format_quota_windows
 from provider_switch.monitoring import (
@@ -66,7 +66,7 @@ class MonitoringTests(unittest.TestCase):
     def test_local_token_usage_is_displayed_in_millions(self) -> None:
         self.assertEqual("0.0M", format_tokens(0))
         self.assertEqual("12.3M", format_tokens(12_345_678))
-        self.assertEqual("8,811M", format_tokens(8_810_684_590))
+        self.assertEqual("8,810.7M", format_tokens(8_810_684_590))
 
     def test_wallet_quota_without_percentage_has_no_display_percentage(self) -> None:
         window = QuotaWindow("钱包余额", remaining=100995323.2886, unit="USD")
@@ -187,6 +187,29 @@ class MonitoringTests(unittest.TestCase):
             self.assertEqual("gpt-5.6-sol", values["other"])
             self.assertTrue(results[0].backup.exists())
 
+    def test_thread_model_sync_can_cover_managed_provider_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            home = Path(name)
+            database = home / "state_1.sqlite"
+            connection = sqlite3.connect(database)
+            connection.execute(
+                "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, model TEXT, archived INTEGER)"
+            )
+            connection.executemany(
+                "INSERT INTO threads VALUES (?, ?, ?, ?)",
+                (("stable", "cch_gz", "old", 0), ("official", "openai", "old", 0), ("other", "other", "old", 0)),
+            )
+            connection.commit()
+            connection.close()
+            results = sync_thread_models(home, "openai", "gpt-5.6-sol", provider_keys={"cch_gz"})
+            connection = sqlite3.connect(database)
+            values = dict(connection.execute("SELECT id, model FROM threads"))
+            connection.close()
+            self.assertEqual(1, len(results))
+            self.assertEqual("gpt-5.6-sol", values["stable"])
+            self.assertEqual("gpt-5.6-sol", values["official"])
+            self.assertEqual("old", values["other"])
+
     def test_manual_config_save_syncs_local_profile_and_credential(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
@@ -212,6 +235,111 @@ class MonitoringTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_disconnect_does_nothing_when_active_provider_is_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            home = root / ".codex"
+            home.mkdir()
+            original = (
+                'model_provider = "external_provider"\n'
+                'model = "external-model"\n\n'
+                '[model_providers.external_provider]\n'
+                'name = "External"\n'
+                'base_url = "https://external.example/v1"\n'
+                'wire_api = "responses"\n'
+                'experimental_bearer_token = "redacted"\n'
+            )
+            config_path = home / "config.toml"
+            config_path.write_text(original, encoding="utf-8")
+            settings = AppSettings(
+                codex_home=str(home),
+                setup_complete=True,
+                stable_provider_key="cch_gz",
+                auto_restart=False,
+                auto_sync_history=False,
+            )
+            store = SettingsStore(root / "data")
+            store.save(settings, {"relay1": "redacted"})
+            controller = ApplicationController(store)
+
+            result = controller.disconnect_other_providers()
+
+            self.assertEqual(original, config_path.read_text(encoding="utf-8"))
+            self.assertIsNone(result.backup_path)
+            self.assertTrue(any("无法识别" in item for item in result.warnings))
+
+    def test_active_probe_follows_config_provider_not_cached_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            home = root / ".codex"
+            home.mkdir()
+            (home / "config.toml").write_text(
+                'model_provider = "custom_glm"\nmodel = "custom-model"\n\n'
+                '[model_providers.custom_glm]\n'
+                'name = "Team GLM"\n'
+                'base_url = "https://open.bigmodel.cn/api/v1"\n'
+                'wire_api = "responses"\n'
+                'experimental_bearer_token = "redacted"\n',
+                encoding="utf-8",
+            )
+            settings = AppSettings(
+                codex_home=str(home),
+                setup_complete=True,
+                active_profile_id="relay1",
+                auto_restart=False,
+                auto_sync_history=False,
+            )
+            settings.profiles["glm"].base_url = "https://open.bigmodel.cn/api/v1"
+            store = SettingsStore(root / "data")
+            store.save(settings, {"glm": "redacted"})
+            controller = ApplicationController(store)
+            seen: list[str] = []
+
+            def fake_check(profile, *args, **kwargs):
+                seen.append(profile.profile_id)
+                return ProviderTelemetry(profile.profile_id, HealthResult(profile.profile_id, "healthy", "ok"))
+
+            with patch("provider_switch.controller.check_provider", side_effect=fake_check):
+                result = controller.check_active()
+            self.assertEqual(["glm"], seen)
+            self.assertEqual(["glm"], list(result))
+
+    def test_official_glm_round_trip_preserves_auth_and_restores_direct_route(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            home = root / ".codex"
+            home.mkdir()
+            (home / "config.toml").write_text('model = "gpt-5.6-sol"\n', encoding="utf-8")
+            (home / "auth.json").write_text('{"auth": "redacted"}', encoding="utf-8")
+            settings = AppSettings(
+                codex_home=str(home),
+                setup_complete=True,
+                stable_provider_key="cch_gz",
+                preserve_provider_key=True,
+                retain_official_auth=True,
+                auto_restart=False,
+                auto_sync_history=False,
+            )
+            settings.profiles["glm"].base_url = "https://open.bigmodel.cn/api/v1"
+            settings.profiles["glm"].model = "glm-5.3-flash"
+            store = SettingsStore(root / "data")
+            store.save(settings, {"glm": "redacted"})
+            controller = ApplicationController(store)
+            controller.switch_profile("glm", disconnect_others=True)
+            glm_config = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
+            self.assertEqual("cch_gz", glm_config["model_provider"])
+            self.assertEqual("glm-5.3-flash", glm_config["model"])
+            self.assertTrue(glm_config.get("model_catalog_json"))
+            self.assertTrue((home / "auth.json").exists())
+
+            with patch.object(controller, "openai_available", return_value=True):
+                controller.switch_profile("openai", disconnect_others=True)
+            direct_config = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
+            self.assertNotIn("model_provider", direct_config)
+            self.assertNotIn("model_catalog_json", direct_config)
+            self.assertTrue((home / "auth.json").exists())
+            self.assertEqual("redacted", controller.credentials["glm"])
+
     def test_isolated_switch_writes_profile_and_catalog_without_restart(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)

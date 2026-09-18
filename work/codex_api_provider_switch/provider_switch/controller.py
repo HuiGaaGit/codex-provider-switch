@@ -11,8 +11,8 @@ from .catalog import ModelCatalogManager
 from .codex_process import CodexProcessController
 from .config_manager import ConfigManager, discover_codex_homes
 from .constants import SWITCH_LOG_NAME
-from .models import AppSettings, ConfigSnapshot, ProviderTelemetry, TokenUsage
-from .monitoring import check_all, check_provider, scan_token_usage, scan_token_usage_seconds
+from .models import AppSettings, ConfigSnapshot, HealthResult, ProviderTelemetry, TokenUsage
+from .monitoring import check_provider, scan_token_usage, scan_token_usage_seconds
 from .settings import SettingsError, SettingsStore, validate_settings
 from .thread_state import ThreadStateError, sync_thread_models
 from .threadripper import find_threadripper, sync_history, threadripper_version
@@ -235,17 +235,47 @@ class ApplicationController:
 
     def detect_active_profile(self) -> str:
         snapshot = self.current_snapshot()
-        if not snapshot.model_provider:
+        provider_key = snapshot.model_provider.strip()
+        if not provider_key or provider_key.casefold() in {"openai", "official"}:
             return "openai"
-        provider = snapshot.providers.get(snapshot.model_provider, {})
+        provider = snapshot.providers.get(provider_key, {})
+        if not isinstance(provider, dict):
+            provider = {}
         base_url = str(provider.get("base_url", "")).rstrip("/").casefold()
-        if snapshot.model.casefold().startswith("glm-"):
-            return "glm"
+        model = snapshot.model.casefold()
+        provider_key_cf = provider_key.casefold()
+        provider_name = str(provider.get("name", "")).casefold()
+        # A manually edited config may use a custom provider key. Prefer an
+        # exact configured key match before falling back to endpoint matching.
         for profile_id in ("relay1", "relay2", "glm"):
             profile = self.settings.profiles[profile_id]
+            if profile.provider_key and provider_key_cf == profile.provider_key.casefold():
+                return profile_id
             if profile.base_url.rstrip("/").casefold() == base_url and base_url:
                 return profile_id
-        return self.settings.active_profile_id or ""
+        # GLM can be manually renamed and may use a stable provider label, so
+        # identify it from the endpoint/key/name as a fallback. Endpoint
+        # matches above win when a relay serves a GLM-named model.
+        if (
+            model.startswith("glm-")
+            or "bigmodel.cn" in base_url
+            or provider_key_cf in {"glm", "zai"}
+            or "glm" in provider_name
+            or "智谱" in provider_name
+        ):
+            return "glm"
+        # API1/API2 are occasionally configured with the same endpoint. In
+        # that ambiguous case the cached profile is only used if it still
+        # describes the actual config; it never overrides a distinct config.
+        cached = self.settings.active_profile_id
+        if cached in {"relay1", "relay2", "glm"}:
+            cached_profile = self.settings.profiles.get(cached)
+            if cached_profile is not None and (
+                cached_profile.provider_key.casefold() == provider_key_cf
+                or cached_profile.base_url.rstrip("/").casefold() == base_url
+            ):
+                return cached
+        return ""
 
     def _managed_provider_keys(self, exclude: set[str]) -> list[str]:
         keys: set[str] = set()
@@ -338,6 +368,7 @@ class ApplicationController:
                         self.codex_home,
                         provider_key,
                         profile.model,
+                        provider_keys=set(self._managed_provider_keys(set())) | {provider_key, "openai"},
                     )
                     result.thread_model_sync = sum(item.updated_threads for item in sync_results)
                 except (ThreadStateError, OSError) as exc:
@@ -349,7 +380,11 @@ class ApplicationController:
 
     def disconnect_other_providers(self, progress: ProgressCallback | None = None) -> OperationResult:
         """Drop live bearer tokens from every provider table except the active one."""
-        active = self.detect_active_profile() or "openai"
+        active = self.detect_active_profile()
+        if not active:
+            result = OperationResult(profile_id="", provider_key="")
+            result.warnings.append("无法识别当前 config.toml 的供应商，未执行断开操作。请先在配置预览中校验。")
+            return result
         profile = self.settings.profiles.get(active)
         active_key = self._target_provider_key(profile) if profile is not None and profile.kind != "official" else None
         keys = self._managed_provider_keys({active_key} if active_key else set())
@@ -388,16 +423,18 @@ class ApplicationController:
         return command, threadripper_version(command) if command else ""
 
     def telemetry(self) -> dict[str, ProviderTelemetry]:
-        return check_all(
-            self.settings.profiles,
-            self.credentials,
-            self.codex_home,
-            self.settings.retain_official_auth,
-        )
+        """Probe only the active provider; callers should not fan out API checks."""
+        return self.check_active()
 
     def check_active(self) -> dict[str, ProviderTelemetry]:
         """Only health-check the currently active provider (CCH-style on-demand probe)."""
-        active_id = self.settings.active_profile_id or "openai"
+        try:
+            active_id = self.detect_active_profile()
+        except Exception:
+            active_id = self.settings.active_profile_id or "openai"
+        if not active_id:
+            health = HealthResult("unknown", "offline", "无法识别 config.toml 中的当前供应商")
+            return {"unknown": ProviderTelemetry("unknown", health, quota_message="未执行额度查询")}
         profile = self.settings.profiles.get(active_id)
         if profile is None:
             return {}
@@ -412,8 +449,13 @@ class ApplicationController:
                 retain_official_auth=self.settings.retain_official_auth,
                 auth_status=auth_status,
             )
-        except Exception:
-            return {}
+        except Exception as exc:
+            health = ProviderTelemetry(
+                profile.profile_id,
+                HealthResult(profile.profile_id, "offline", f"监控异常：{exc}"),
+                quota_message="查询失败",
+            )
+            return {profile.profile_id: health}
         return {profile.profile_id: item}
 
     def token_usage(self) -> dict[str, TokenUsage]:

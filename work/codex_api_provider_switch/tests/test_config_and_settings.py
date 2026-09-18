@@ -121,6 +121,24 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertIn("cch_gz", parsed["model_providers"])
         self.assertIn('# model_provider = "cch_gz"', text)
 
+    def test_disconnect_keeps_non_auth_custom_headers(self) -> None:
+        (self.home / "config.toml").write_text(
+            'model_provider = "cch_gz"\n'
+            'model = "gpt-5.6-sol"\n\n'
+            '[model_providers.cch_gz]\n'
+            'name = "Relay"\n'
+            'base_url = "https://relay.example/v1"\n'
+            'wire_api = "responses"\n'
+            'experimental_bearer_token = "old-secret"\n'
+            'http_headers = { x-tenant = "keep-me", authorization = "remove-me" }\n',
+            encoding="utf-8",
+        )
+        manager = ConfigManager(self.home)
+        manager.clear_provider_keys(["cch_gz"])
+        provider = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))["model_providers"]["cch_gz"]
+        self.assertNotIn("experimental_bearer_token", provider)
+        self.assertEqual({"x-tenant": "keep-me"}, provider["http_headers"])
+
 
 class SettingsAndCatalogTests(unittest.TestCase):
     def test_legacy_auto_restart_is_disabled_during_safe_migration(self) -> None:

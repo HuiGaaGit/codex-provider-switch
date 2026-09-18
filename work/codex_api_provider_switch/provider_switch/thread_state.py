@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Iterable
 
 from .constants import BACKUP_DIRECTORY_NAME
 
@@ -27,14 +28,17 @@ def sync_thread_models(
     codex_home: Path,
     provider_key: str,
     model: str,
+    provider_keys: Iterable[str] | None = None,
 ) -> list[ThreadModelSyncResult]:
-    """Make reopened, non-archived threads follow the newly selected model."""
+    """Make managed, non-archived threads follow the newly selected model."""
     if not provider_key or not model:
         raise ThreadStateError("同步会话模型需要 provider 标签和模型名。")
     backup_root = codex_home / BACKUP_DIRECTORY_NAME
     backup_root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     results: list[ThreadModelSyncResult] = []
+    keys = {str(item).strip() for item in (provider_keys or ()) if str(item).strip()}
+    keys.add(provider_key)
     for database in sorted(codex_home.glob("state_*.sqlite")):
         connection: sqlite3.Connection | None = None
         try:
@@ -58,15 +62,16 @@ def sync_thread_models(
             finally:
                 backup_connection.close()
             with connection:
+                placeholders = ", ".join("?" for _ in keys)
                 updated = connection.execute(
-                    """
+                    f"""
                     UPDATE threads
                        SET model = ?
                      WHERE archived = 0
-                       AND model_provider = ?
+                       AND model_provider IN ({placeholders})
                        AND (model IS NULL OR model <> ?)
                     """,
-                    (model, provider_key, model),
+                    (model, *sorted(keys), model),
                 ).rowcount
             results.append(ThreadModelSyncResult(database, backup_path, max(0, updated)))
         except sqlite3.Error as exc:

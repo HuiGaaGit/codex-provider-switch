@@ -26,15 +26,16 @@ class AuthStatus:
     @property
     def official_account_logged_in(self) -> bool:
         """Only ChatGPT/account credentials unlock the OpenAI direct profile."""
-        if self.state == "chatgpt":
-            return True
-        return self.state == "authenticated" and self.auth_file_exists
+        # An auth file or an unclassified "authenticated" response can also
+        # represent an API key/workload credential. Only the explicit ChatGPT
+        # account state is allowed to re-enable the official direct route.
+        return self.state == "chatgpt"
     @property
     def label(self) -> str:
         return {
             "chatgpt": "ChatGPT 官方账号已登录",
             "api_key": "检测到 OpenAI API Key（非官方账号登录态）",
-            "authenticated": "OpenAI 凭据已登录",
+            "authenticated": "检测到未分类凭据（不启用官方直连）",
             "signed_out": "未登录 OpenAI",
             "unavailable": "Codex CLI 不可用",
             "unknown": "登录状态无法确认",
@@ -143,6 +144,8 @@ class CodexAuthManager:
         if return_code != 0:
             raise CodexAuthError("Codex 登录未完成，请重试并完成浏览器授权。")
         status = self.status()
-        if not status.logged_in:
-            raise CodexAuthError("登录进程已结束，但未检测到有效 OpenAI 登录态。")
+        if not status.official_account_logged_in:
+            raise CodexAuthError(
+                "登录进程已结束，但未检测到 OpenAI 官方账号登录态；API Key 登录不能启用官方直连。"
+            )
         return status

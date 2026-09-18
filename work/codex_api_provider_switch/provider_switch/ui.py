@@ -31,10 +31,7 @@ PROFILE_COLORS = {
 
 
 def format_tokens(value: int) -> str:
-    millions = value / 1_000_000
-    if millions >= 100:
-        return f"{millions:,.0f}M"
-    return f"{millions:,.1f}M"
+    return f"{value / 1_000_000:,.1f}M"
 
 
 def make_button(
@@ -169,14 +166,20 @@ class ProviderCard(tk.Frame):
             return
         self.kind_var.set(f"当前 · {unavailable_text}" if active else unavailable_text)
         self.state_label.configure(background=COLORS["surface_alt"], foreground=COLORS["warning"])
+        self.health_var.set("官方账号未登录" if self.profile_id == "openai" else "尚未完成供应商配置")
+        self.quota_var.set("额度：尚未检查")
         self.switch_button.configure(
             text=unavailable_text,
             state="disabled",
         )
 
+    def clear_telemetry(self, *, active: bool = False) -> None:
+        self.health_var.set("等待当前供应商检查" if active else "尚未检查（仅检查当前供应商）")
+        self.quota_var.set("额度：尚未检查")
+
     def set_telemetry(self, telemetry: ProviderTelemetry | None) -> None:
         if telemetry is None:
-            self.health_var.set("等待检测")
+            self.health_var.set("尚未检查（仅检查当前供应商）")
             self.health_label.configure(foreground=COLORS["muted"])
             return
         health = telemetry.health
@@ -187,6 +190,8 @@ class ProviderCard(tk.Frame):
             "warning": COLORS["warning"],
             "auth_error": COLORS["danger"],
             "offline": COLORS["danger"],
+            "unconfigured": COLORS["warning"],
+            "unknown": COLORS["warning"],
         }.get(health.state, COLORS["muted"])
         self.health_label.configure(foreground=health_color)
         if telemetry.quota:
@@ -234,6 +239,7 @@ class ProviderSwitchApp(tk.Tk):
         self.event_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self.busy = False
         self.telemetry_data: dict[str, ProviderTelemetry] = {}
+        self.telemetry_active_id: str | None = None
         self.usage_data: dict[str, TokenUsage] = {}
         self.nav_buttons: dict[str, tk.Button] = {}
         self.pages: dict[str, tk.Frame] = {}
@@ -242,6 +248,9 @@ class ProviderSwitchApp(tk.Tk):
             "unknown", False, self.controller.codex_home / "auth.json"
         )
         self._auth_running = False
+        # Health probes are on-demand for the active provider. Keep the flag
+        # only for backwards-compatible constructor callers; do not schedule
+        # periodic fan-out checks.
         self._monitor_enabled = start_monitor
         self._setup_styles()
         self._build_shell()
@@ -1002,7 +1011,10 @@ class ProviderSwitchApp(tk.Tk):
         retained = self.controller.settings.retain_official_auth
         self.auth_status_var.set(status.label)
         self.auth_policy_var.set(
-            "策略：保留官方登录态" if retained else "策略：不保留，OpenAI 直连已停用"
+            "策略：保留官方登录态供 OpenAI 直连；API1、API2、GLM 使用各自 API Key"
+            "；配置路由一次只启用一个供应商"
+            if retained
+            else "策略：不保留官方登录态；API1、API2、GLM 不受影响，OpenAI 直连已停用"
         )
         file_state = "存在" if status.auth_file_exists else "未发现（凭据也可能位于系统凭据库）"
         self.auth_path_var.set(f"auth.json：{file_state} · {status.auth_path}")
@@ -1092,7 +1104,7 @@ class ProviderSwitchApp(tk.Tk):
 
     def _build_settings_page(self) -> None:
         page = self._new_page("settings")
-        self._page_header(page, "设置", "配置位置、历史兼容、自动重启与监控频率")
+        self._page_header(page, "设置", "配置位置、历史兼容、自动重启与托盘行为")
         form = tk.Frame(page, background=COLORS["surface"], padx=22, pady=20)
         form.grid(row=1, column=0, sticky="ew")
         form.columnconfigure(1, weight=1)
@@ -1148,21 +1160,6 @@ class ProviderSwitchApp(tk.Tk):
         number_row.grid(row=3, column=0, columnspan=3, sticky="w", pady=(12, 0))
         tk.Label(
             number_row,
-            text="健康刷新（秒）",
-            background=COLORS["surface"],
-            foreground=COLORS["muted"],
-            font=(FONT, 9),
-        ).pack(side="left")
-        ttk.Spinbox(
-            number_row,
-            from_=10,
-            to=3600,
-            increment=10,
-            textvariable=self.setting_vars["monitor_interval_seconds"],
-            width=8,
-        ).pack(side="left", padx=(8, 24))
-        tk.Label(
-            number_row,
             text="Token 统计天数",
             background=COLORS["surface"],
             foreground=COLORS["muted"],
@@ -1175,6 +1172,14 @@ class ProviderSwitchApp(tk.Tk):
             textvariable=self.setting_vars["usage_lookback_days"],
             width=8,
         ).pack(side="left", padx=(8, 0))
+        tk.Label(
+            form,
+            text="健康监控只检查当前实际使用的供应商，在启动、切换完成或点击刷新时触发。",
+            background=COLORS["surface"],
+            foreground=COLORS["muted"],
+            font=(FONT, 9),
+            anchor="w",
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 0))
         actions = tk.Frame(page, background=COLORS["window"])
         actions.grid(row=2, column=0, sticky="e", pady=(14, 0))
         make_button(actions, "重新运行部署向导", self.open_setup_wizard).pack(side="left", padx=(0, 8))
@@ -1256,26 +1261,32 @@ class ProviderSwitchApp(tk.Tk):
             self.active_route_var.set("配置不可用")
             self.route_detail_var.set(str(exc))
             return
+        if active_id != self.telemetry_active_id:
+            self.telemetry_data = {}
+            self.telemetry_active_id = active_id
         active_profile = self.controller.settings.profiles.get(active_id)
         self.active_route_var.set(active_profile.display_name if active_profile else "未识别的供应商")
         provider_label = snapshot.model_provider or "openai"
         self.route_detail_var.set(f"provider: {provider_label}")
         for profile_id, card in self.provider_cards.items():
             profile = self.controller.settings.profiles[profile_id]
+            is_active = profile_id == active_id
+            card.clear_telemetry(active=is_active)
             card.set_profile(profile)
-            card.set_active(profile_id == active_id, provider_label if profile_id == active_id else "")
+            card.set_active(is_active, provider_label if is_active else "")
             if profile_id == "openai":
                 card.set_available(
                     self.controller.openai_available(self.auth_status_data),
-                    active=profile_id == active_id,
+                    active=is_active,
                 )
             else:
                 card.set_available(
-                    profile_id == active_id or self.controller.profile_ready(profile_id),
-                    active=profile_id == active_id,
+                    is_active or self.controller.profile_ready(profile_id),
+                    active=is_active,
                     unavailable_text="未配置",
                 )
-            card.set_telemetry(self.telemetry_data.get(profile_id))
+            if is_active and active_id == self.telemetry_active_id:
+                card.set_telemetry(self.telemetry_data.get(profile_id))
             usage_key = "openai" if profile_id == "openai" else provider_label
             card.set_usage(
                 self.usage_data.get(usage_key),
@@ -1305,10 +1316,11 @@ class ProviderSwitchApp(tk.Tk):
 
         def worker() -> None:
             try:
+                active_id = self.controller.detect_active_profile() or "unknown"
                 telemetry = self.controller.telemetry()
                 usage = self.controller.token_usage()
                 auth_status = self.controller.auth_status()
-                self.event_queue.put(("monitor_data", (telemetry, usage, auth_status)))
+                self.event_queue.put(("monitor_data", (active_id, telemetry, usage, auth_status)))
             except Exception as exc:
                 self.event_queue.put(("monitor_failed", exc))
 
@@ -1336,12 +1348,16 @@ class ProviderSwitchApp(tk.Tk):
             return
         profile = self.controller.settings.profiles[profile_id]
         detail = "Codex 将自动重启。" if self.controller.settings.auto_restart else "切换后请手动重启 Codex。"
-        if not messagebox.askyesno(
+        choice = messagebox.askyesnocancel(
             APP_NAME,
-            f"切换到 {profile.display_name}？\n\n{detail}\n写入前会自动备份 config.toml。",
+            f"切换到 {profile.display_name}？\n\n{detail}\n\n"
+            "选择“是”会断开其他供应商的 bearer 连接；选择“否”保留共存。\n"
+            "写入前会自动备份 config.toml。",
             parent=self,
-        ):
+        )
+        if choice is None:
             return
+        disconnect_others = bool(choice)
         self._set_busy(True, f"正在切换到 {profile.display_name}")
 
         def worker() -> None:
@@ -1349,6 +1365,7 @@ class ProviderSwitchApp(tk.Tk):
                 result = self.controller.switch_profile(
                     profile_id,
                     progress=lambda message: self.event_queue.put(("operation_progress", message)),
+                    disconnect_others=disconnect_others,
                 )
                 self.event_queue.put(("switch_done", result))
             except Exception as exc:
@@ -1453,14 +1470,23 @@ class ProviderSwitchApp(tk.Tk):
                     self.refresh_all()
                 elif event == "monitor_data":
                     self._monitor_running = False
-                    self.telemetry_data, self.usage_data, self.auth_status_data = payload  # type: ignore[misc]
+                    active_id, telemetry, usage, auth_status = payload  # type: ignore[misc]
+                    try:
+                        current_id = self.controller.detect_active_profile() or "unknown"
+                    except Exception:
+                        current_id = active_id
+                    if current_id != active_id:
+                        self.telemetry_data = {}
+                        self.telemetry_active_id = current_id
+                    else:
+                        self.telemetry_active_id = active_id
+                        self.telemetry_data = telemetry
+                    self.usage_data = usage
+                    self.auth_status_data = auth_status
                     self.dashboard_refresh_button.configure(state="normal", text="立即刷新")
                     self.footer_var.set("供应商状态已更新")
                     self.refresh_deployment_view()
                     self.refresh_all()
-                    if self._monitor_enabled:
-                        delay = self.controller.settings.monitor_interval_seconds * 1000
-                        self.after(delay, self.refresh_monitoring)
                 elif event == "monitor_failed":
                     self._monitor_running = False
                     self.dashboard_refresh_button.configure(state="normal", text="立即刷新")
@@ -1864,7 +1890,7 @@ class SetupWizard(tk.Toplevel):
             self.setup_route_buttons[profile_id] = button
         self.setup_auth_check = tk.Checkbutton(
             panel,
-            text="保留 OpenAI 官方登录态",
+            text="保留 OpenAI 官方账号登录态（仅用于 OpenAI 直连）",
             variable=self.vars["retain_official_auth"],
             command=self._sync_setup_auth_choice,
             background=COLORS["surface"],
@@ -1921,7 +1947,7 @@ class SetupWizard(tk.Toplevel):
             f"Codex Home\n{self.vars['codex_home'].get()}\n\n"
             f"provider 标签\n{self.vars['stable_provider_key'].get()}"
             f"（{'保持' if self.vars['preserve_provider_key'].get() else '按供应商切换'}）\n\n"
-            f"官方登录态\n{auth_action}\n\n"
+            f"官方登录态（仅供 OpenAI 直连）\n{auth_action}\n\n"
             f"模型目录\n{'注入内置 models.json' if self.vars['inject_catalog'].get() else '暂不注入'}"
         )
 

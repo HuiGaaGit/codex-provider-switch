@@ -27,6 +27,17 @@ class AuthManagerTests(unittest.TestCase):
             self.assertFalse(status.official_account_logged_in)
             self.assertNotIn("sensitive", status.label + status.detail)
 
+    def test_unclassified_auth_file_does_not_unlock_official_account_route(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            home = Path(name)
+            (home / "auth.json").write_text('{"auth": "redacted"}', encoding="utf-8")
+            runner = Mock(
+                return_value=subprocess.CompletedProcess([], 0, "Logged in using a workspace credential", "")
+            )
+            status = CodexAuthManager(home, runner=runner, command="codex").status()
+            self.assertEqual("authenticated", status.state)
+            self.assertFalse(status.official_account_logged_in)
+
     def test_logout_ignores_external_api_key_after_auth_file_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             home = Path(name)
@@ -69,6 +80,20 @@ class AuthManagerTests(unittest.TestCase):
                 Path(name), runner=runner, popen_factory=Mock(return_value=process), command="codex"
             ).login_interactive()
             self.assertEqual("chatgpt", status.state)
+
+    def test_interactive_api_key_login_does_not_unlock_official_route(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            runner = Mock(
+                return_value=subprocess.CompletedProcess(
+                    [], 0, "Logged in using an API key", ""
+                )
+            )
+            process = Mock()
+            process.wait.return_value = 0
+            with self.assertRaisesRegex(CodexAuthError, "官方账号"):
+                CodexAuthManager(
+                    Path(name), runner=runner, popen_factory=Mock(return_value=process), command="codex"
+                ).login_interactive()
 
 
 class FakeAuthManager:

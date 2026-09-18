@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.2.1`
+当前交付版本：`1.2.10`
 
 ## 日常使用
 
@@ -10,10 +10,10 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 
 1. 自动定位 `%USERPROFILE%\.codex\config.toml`，也可手动选择其他 Codex Home。
 2. 导入原 `model_provider`、模型、供应商地址与旧版中转设置；中转 1 / 2 可只配置其中一个，未配置项会在总览中禁用。
-3. 检测 OpenAI 官方登录态，选择是否在中转模式保留 auth；确认稳定 provider 标签、注入 `models.json`，并检测或一键安装 Codex Threadripper。
+3. 检测 OpenAI 官方登录态，选择是否保留它供后续 OpenAI 直连使用；API1、API2、GLM 始终使用各自独立 API Key。确认稳定 provider 标签、注入 `models.json`，并检测或一键安装 Codex Threadripper。
 4. 选择首次启用的供应商，备份并写入配置。
 
-完成部署后默认进入总览，只保留四个一键切换入口和健康、额度、Token 摘要。供应商详情、模型目录、Threadripper、官方登录态与高级设置分别位于独立功能区。关闭主窗口时默认缩入 Windows 系统托盘，链路、额度和 Token 统计继续后台刷新；托盘菜单可恢复窗口、立即刷新或彻底退出。Windows 优先使用 PySide6 液态毛玻璃界面，缺少 Qt 运行库时回退到 Tk 界面。
+完成部署后默认进入总览，只保留四个一键切换入口和健康、额度、Token 摘要。供应商详情、模型目录、Threadripper、官方登录态与高级设置分别位于独立功能区。关闭主窗口时默认缩入 Windows 系统托盘；健康检查仅在启动、切换完成或手动刷新时检查当前供应商，托盘菜单可恢复窗口、立即刷新或彻底退出。Windows 优先使用 PySide6 液态毛玻璃界面，缺少 Qt 运行库时回退到 Tk 界面。
 
 ## 切换与历史兼容
 
@@ -83,10 +83,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.2.1.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.2.1.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.2.1.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.2.1.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.2.10.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.2.10.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.2.10.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.2.10.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -97,18 +97,25 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.2.1.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.2.1.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.2.10.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.2.10.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.1.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.1.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.1.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.10.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.10.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.10.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
+
+## 1.2.10 变更
+
+- 统一官方登录态文案：auth 仅用于 OpenAI 直连，API1、API2、GLM 使用各自独立 API Key。
+- 修复未分类凭据或 API Key 登录误解锁 OpenAI 直连的问题。
+- 当前供应商健康检查、额度和旧遥测状态按实际 `config.toml` 路由刷新，避免显示过期供应商数据。
+- 总览、监控、部署与设置页支持小窗口滚动，供应商卡片和右下角缩放控件不再裁切。
 
 ## 1.2.1 变更
 
@@ -146,7 +153,7 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 
 ## 1.1.6 变更
 
-- 本地 Token 统计、供应商卡片用量和托盘摘要统一改为 M（百万 token）显示；例如 8,810,684,590 tokens 会显示为 `8810.7M tokens`。
+- 本地 Token 统计、供应商卡片用量和托盘摘要统一改为 M（百万 token）显示；例如 8,810,684,590 tokens 会显示为 `8,810.7M tokens`。
 
 1.1.6 发布校验：安装包 SHA-256 为 `3AE685F5AC2EF431E247149941143C5A3DCF005BBFA3BED94E0B5D6C821467AC`；便携 EXE SHA-256 为 `20E8CF3DB9AFE695409CE8335932448AAE7ADB4A9C9A5F8F14E094866A7281C6`。
 
