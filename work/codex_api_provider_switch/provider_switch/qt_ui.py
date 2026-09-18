@@ -992,6 +992,7 @@ class ProviderSwitchWindow(QMainWindow):
         scope_hint = QLabel("每次只记录当时实际使用的供应商；未切换或未刷新时不会产生其他供应商记录。")
         scope_hint.setProperty("class", "muted")
         scope_hint.setWordWrap(True)
+        self._monitor_scope_hint = scope_hint
         timeline_layout.addWidget(scope_hint)
         self._timeline_labels: list[str] = []
         self._timeline_widget = MonitorTimelineWidget()
@@ -1061,7 +1062,18 @@ class ProviderSwitchWindow(QMainWindow):
         seconds = 3600.0
         if checked is not None:
             seconds = self._monitor_ranges.get(checked.text(), 3600.0)
-        records = self.monitor_history.load(max_age_seconds=seconds)
+        records = self.monitor_history.load_codex_request_records(
+            self.controller.codex_home, seconds
+        )
+        if records:
+            self._monitor_scope_hint.setText(
+                "每次只记录当时实际使用的供应商；当前时间范围内已有 "
+                f"{len(records)} 条检查记录。"
+            )
+        else:
+            self._monitor_scope_hint.setText(
+                "当前时间范围暂无检查记录；点击右上角刷新，或等待当前供应商完成首次检查。"
+            )
         profile_ids = ["openai", "relay1", "relay2", "glm"]
         summaries = self.monitor_history.summarize(records, profile_ids)
         availabilities = [s.availability for s in summaries.values() if s.availability is not None]
@@ -1894,6 +1906,12 @@ class ProviderSwitchWindow(QMainWindow):
             self.load_config_from_disk()
         if page_id == "deployment":
             self.refresh_deployment_view()
+        if page_id == "monitoring":
+            # The application may have been opened with monitoring disabled
+            # (for example from a smoke test or tray hand-off).  Always load
+            # existing history when the page becomes visible, and perform a
+            # first on-demand probe when the selected window has no records.
+            self._refresh_monitor_page()
 
     def _set_footer(self, text: str) -> None:
         self.footer_status.setText(text)
@@ -2035,7 +2053,7 @@ class ProviderSwitchWindow(QMainWindow):
         self._monitoring_in_progress = True
         self._busy_count += 1
         self.refresh_button.setEnabled(False)
-        self.active_header.set_tone("warning", "检查中")
+        self.active_header.set_tone("warning", "读取请求记录")
         self._run_job(
             self._collect_monitoring,
             self._handle_monitoring_snapshot,
@@ -2046,7 +2064,9 @@ class ProviderSwitchWindow(QMainWindow):
         self,
     ) -> tuple[str, dict[str, ProviderTelemetry], dict[str, TokenUsage]]:
         active = self.controller.detect_active_profile() or "unknown"
-        return active, self.controller.check_active(), self.controller.token_usage()
+        # Health is derived from actual Codex request outcomes in local
+        # session logs. Refreshing this page must not send a synthetic probe.
+        return active, {}, self.controller.token_usage()
 
     def _handle_monitoring_snapshot(
         self,
@@ -2068,7 +2088,7 @@ class ProviderSwitchWindow(QMainWindow):
         if self._busy_count:
             self.active_header.set_tone("warning", "处理中")
         else:
-            self.active_header.set_tone("success", "监控在线")
+            self.active_header.set_tone("success", "请求监控在线")
         if active_id is None:
             try:
                 active_id = self.controller.detect_active_profile() or "unknown"
@@ -2115,9 +2135,8 @@ class ProviderSwitchWindow(QMainWindow):
         else:
             active = self.controller.settings.profiles.get(active_id)
             active_name = active.display_name if active is not None else active_id
-            self._set_footer(f"{active_name} 已完成最近一次检查；其他供应商未主动探测。")
+            self._set_footer(f"{active_name} 的请求健康记录已更新；监控不会主动发起探测。")
         self._update_tray_status(telemetry, bad)
-        self._record_monitor_history(telemetry)
 
     def _update_tray_status(
         self,

@@ -1,4 +1,4 @@
-"""Codex Provider Switch v1.2.13 entry point."""
+"""Codex Provider Switch v1.2.15 entry point."""
 
 from __future__ import annotations
 
@@ -135,3 +135,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

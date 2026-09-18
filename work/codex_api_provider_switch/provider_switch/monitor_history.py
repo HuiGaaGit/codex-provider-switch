@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 
 
@@ -83,6 +84,68 @@ class MonitorHistory:
                     )
         except OSError:
             return []
+        return records
+
+    @staticmethod
+    def load_codex_request_records(codex_home: Path, max_age_seconds: float) -> list[HealthRecord]:
+        """Read request outcomes emitted by Codex itself.
+
+        This is deliberately local log ingestion: it never sends a probe to a
+        provider. A completed task is a successful request, an aborted turn is
+        a warning, and an upstream response item with an error status is an
+        offline result.
+        """
+        cutoff = time.time() - max_age_seconds
+        records: list[HealthRecord] = []
+        for root_name in ("sessions", "archived_sessions"):
+            root = codex_home / root_name
+            if not root.exists():
+                continue
+            for path in root.rglob("*.jsonl"):
+                if not path.is_file():
+                    continue
+                provider = "unknown"
+                try:
+                    with path.open("r", encoding="utf-8", errors="replace") as stream:
+                        for line in stream:
+                            try:
+                                event = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            timestamp = event.get("timestamp")
+                            try:
+                                stamp = str(timestamp).replace("Z", "+00:00")
+                                parsed = datetime.fromisoformat(stamp)
+                                if parsed.tzinfo is None:
+                                    ts = parsed.timestamp()
+                                else:
+                                    ts = parsed.timestamp()
+                            except (TypeError, ValueError, OverflowError):
+                                ts = path.stat().st_mtime
+                            if ts < cutoff:
+                                continue
+                            if event.get("type") == "session_meta":
+                                value = event.get("payload", {}).get("model_provider")
+                                if isinstance(value, str) and value:
+                                    provider = value
+                                continue
+                            state = ""
+                            payload = event.get("payload", {})
+                            if event.get("type") == "event_msg":
+                                kind = payload.get("type")
+                                if kind == "task_complete":
+                                    state = "healthy"
+                                elif kind == "turn_aborted":
+                                    state = "warning"
+                            elif event.get("type") == "response_item":
+                                status = str(payload.get("status", "")).casefold()
+                                if status in {"failed", "error", "incomplete"}:
+                                    state = "offline"
+                            if state:
+                                records.append(HealthRecord(ts, provider, state))
+                except (OSError, ValueError):
+                    continue
+        records.sort(key=lambda item: item.timestamp)
         return records
 
     def summarize(

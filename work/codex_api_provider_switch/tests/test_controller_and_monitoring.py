@@ -22,11 +22,28 @@ from provider_switch.monitoring import (
     scan_token_usage_seconds,
     load_switch_timeline,
 )
+from provider_switch.monitor_history import MonitorHistory
 from provider_switch.settings import SettingsStore
 from provider_switch.thread_state import sync_thread_models
 
 
 class MonitoringTests(unittest.TestCase):
+    def test_request_health_reads_codex_outcomes_without_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            home = Path(name)
+            session_dir = home / "sessions" / "2026" / "09" / "19"
+            session_dir.mkdir(parents=True)
+            events = [
+                {"timestamp": "2026-09-19T01:00:00+00:00", "type": "session_meta", "payload": {"model_provider": "ZAI"}},
+                {"timestamp": "2026-09-19T01:00:01+00:00", "type": "event_msg", "payload": {"type": "task_complete"}},
+                {"timestamp": "2026-09-19T01:00:02+00:00", "type": "response_item", "payload": {"status": "failed"}},
+            ]
+            (session_dir / "rollout-health.jsonl").write_text(
+                "\n".join(json.dumps(item) for item in events) + "\n", encoding="utf-8"
+            )
+            records = MonitorHistory.load_codex_request_records(home, 365 * 86400)
+            self.assertEqual(["healthy", "offline"], [item.state for item in records])
+            self.assertEqual(["ZAI", "ZAI"], [item.profile_id for item in records])
     def test_glm_quota_classifies_five_hour_and_weekly_windows(self) -> None:
         payload = {
             "data": {
