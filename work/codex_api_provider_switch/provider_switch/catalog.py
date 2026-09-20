@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .constants import BACKUP_DIRECTORY_NAME, MODEL_CATALOG_NAME
+from .constants import BACKUP_DIRECTORY_NAME, GLM_CATALOG_NAME, MODEL_CATALOG_NAME
 
 
 class CatalogError(RuntimeError):
@@ -52,7 +52,8 @@ def validate_catalog_text(text: str) -> tuple[dict[str, Any], int]:
 class ModelCatalogManager:
     def __init__(self, codex_home: Path) -> None:
         self.codex_home = codex_home.expanduser().resolve(strict=False)
-        self.target_path = self.codex_home / MODEL_CATALOG_NAME
+        self.target_path = self.codex_home / GLM_CATALOG_NAME
+        self.legacy_target_path = self.codex_home / MODEL_CATALOG_NAME
         self.bundled_path = resource_path(f"assets/{MODEL_CATALOG_NAME}")
 
     def bundled_text(self) -> str:
@@ -82,6 +83,8 @@ class ModelCatalogManager:
         )
         if bundled_model is None:
             return False, None
+        if not self.target_path.exists():
+            self._migrate_legacy_glm_catalog()
         if not self.target_path.exists():
             _, _, backup = self.inject_bundled()
             return True, backup
@@ -118,6 +121,31 @@ class ModelCatalogManager:
         finally:
             temporary.unlink(missing_ok=True)
         return True, backup
+
+    def _migrate_legacy_glm_catalog(self) -> None:
+        """Reuse a legacy file only when it is exclusively a GLM catalog.
+
+        Version 1.2.26 and earlier wrote GLM capabilities into models.json.
+        That path is also valid for GPT-compatible relays such as aqyimin, so
+        reusing mixed or relay-owned files would leak GLM entries into API1.
+        """
+        if not self.legacy_target_path.exists():
+            return
+        try:
+            payload, _ = validate_catalog_text(
+                self.legacy_target_path.read_text(encoding="utf-8-sig")
+            )
+        except (CatalogError, OSError, UnicodeError):
+            return
+        if not payload["models"] or not all(
+            str(item.get("slug", "")).casefold().startswith("glm-")
+            for item in payload["models"]
+        ):
+            return
+        try:
+            shutil.copy2(self.legacy_target_path, self.target_path)
+        except OSError:
+            return
 
     def save(self, text: str) -> tuple[Path, int, Path | None]:
         payload, count = validate_catalog_text(text)

@@ -2311,6 +2311,17 @@ class ProviderSwitchWindow(QMainWindow):
                 f"{profile.display_name} 尚未填写完整的 API 地址、模型和 Key。",
             )
             return
+
+        try:
+            current_id = self.controller.detect_active_profile()
+        except Exception:
+            current_id = self.controller.settings.active_profile_id
+        if current_id in {"relay1", "relay2"} and profile_id in {"relay1", "relay2"}:
+            # API1/API2 are equivalent GPT-compatible relays. Isolate the new
+            # route immediately; there is no GLM/OpenAI boundary to preserve.
+            self._start_switch(profile_id, True)
+            return
+
         profile = self.controller.settings.profiles[profile_id]
         others = [
             p.display_name
@@ -2333,7 +2344,11 @@ class ProviderSwitchWindow(QMainWindow):
         if clicked is cancel_button:
             return
         disconnect_others = clicked is disconnect_button
+        self._start_switch(profile_id, disconnect_others)
+
+    def _start_switch(self, profile_id: str, disconnect_others: bool) -> None:
         self._set_busy(True, f"正在切换到 {profile.display_name}")
+        profile = self.controller.settings.profiles[profile_id]
         self._run_job(
             lambda: self.controller.switch_profile(
                 profile_id,

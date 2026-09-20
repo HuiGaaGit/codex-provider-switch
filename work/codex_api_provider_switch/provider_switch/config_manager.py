@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .constants import BACKUP_DIRECTORY_NAME, DEFAULT_CODEX_HOME
+from .constants import BACKUP_DIRECTORY_NAME, DEFAULT_CODEX_HOME, MODEL_CATALOG_NAME
 from .models import ConfigSnapshot, ProviderProfile
 
 
@@ -271,16 +271,22 @@ class ConfigManager:
             if not isinstance(provider, dict) or not self._is_aqyimin_url(provider.get("base_url")):
                 return
             values = {
-                key: parsed[key]
-                for key in ("model_catalog_json", "model_reasoning_effort")
-                if key in parsed
+                key: parsed.get(key)
+                for key in ("model", "model_catalog_json", "model_reasoning_effort")
+            }
+            payload = {
+                "schema": 2,
+                "provider_base_url": provider.get("base_url", ""),
+                "values": values,
             }
             if not values:
                 return
             self.backup_directory.mkdir(parents=True, exist_ok=True)
-            self.image_capability_backup.write_text(
-                json.dumps(values, ensure_ascii=False, indent=2), encoding="utf-8"
+            temporary = self.image_capability_backup.with_suffix(".json.tmp")
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            os.replace(temporary, self.image_capability_backup)
         except (OSError, TypeError, tomllib.TOMLDecodeError):
             return
 
@@ -291,10 +297,32 @@ class ConfigManager:
             # the original aqyimin config had no custom catalog.
             return _set_top_level(text, "model_catalog_json", None)
         try:
-            values = json.loads(self.image_capability_backup.read_text(encoding="utf-8"))
-            if not isinstance(values, dict):
-                return text
+            payload = json.loads(self.image_capability_backup.read_text(encoding="utf-8"))
+            if isinstance(payload, dict) and payload.get("schema") == 2:
+                values = payload.get("values", {})
+                if not isinstance(values, dict):
+                    return text
+                updated = text
+                for key in ("model", "model_catalog_json", "model_reasoning_effort"):
+                    updated = _set_top_level(updated, key, values.get(key))
+                return updated
+
+            # Version 1.2.26 captured only a sparse map and could mistake the
+            # ambiguous legacy models.json (which GLM also wrote) for an
+            # aqyimin-owned catalog. Drop that stale pair instead of making
+            # API1 display GLM models again.
+            values = payload if isinstance(payload, dict) else {}
             updated = text
+            legacy_catalog = values.get("model_catalog_json")
+            is_legacy_glm_catalog = (
+                isinstance(legacy_catalog, str)
+                and Path(legacy_catalog).resolve(strict=False)
+                == (self.codex_home / MODEL_CATALOG_NAME).resolve(strict=False)
+            )
+            if is_legacy_glm_catalog:
+                updated = _set_top_level(updated, "model_catalog_json", None)
+                updated = _set_top_level(updated, "model_reasoning_effort", None)
+                return updated
             for key in ("model_catalog_json", "model_reasoning_effort"):
                 if key in values:
                     updated = _set_top_level(updated, key, values[key])

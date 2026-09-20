@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 APP_NAME = "Codex Provider Switch"
-APP_VERSION = "1.2.26"
+APP_VERSION = "1.2.27"
 APP_SLUG = "codex-provider-switch"
 
 DEFAULT_CODEX_HOME = Path.home() / ".codex"
@@ -17,6 +17,7 @@ SWITCH_LOG_NAME = "switch-history.jsonl"
 MONITOR_HISTORY_DIRECTORY_NAME = "monitor-history"
 BACKUP_DIRECTORY_NAME = "provider-switch-backups"
 MODEL_CATALOG_NAME = "models.json"
+GLM_CATALOG_NAME = "models-glm.json"
 
 THREADRIPPER_NAME = "codex-threadripper"
 THREADRIPPER_REPOSITORY = "Wangnov/codex-threadripper"

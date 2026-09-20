@@ -410,7 +410,7 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual("cch_gz", result.provider_key)
             self.assertEqual("glm-5.3", parsed["model"])
             self.assertEqual("https://open.bigmodel.cn/api/v1", parsed["model_providers"]["cch_gz"]["base_url"])
-            self.assertTrue((home / "models.json").exists())
+            self.assertTrue((home / "models-glm.json").exists())
             reloaded, credentials = store.load()
             self.assertEqual("glm", reloaded.active_profile_id)
             self.assertEqual("glm-test-key", credentials["glm"])

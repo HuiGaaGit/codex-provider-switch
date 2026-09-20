@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.2.26`
+当前交付版本：`1.2.27`
 
 ## 日常使用
 
@@ -19,8 +19,9 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 
 - OpenAI 直连：取消自定义 `model_provider` 默认值，继续使用 Codex 当前 OpenAI/ChatGPT 登录；只有检测到保留的官方登录态时按钮才可用。
 - API1 / API2：写入各自的 `base_url`、模型和 `experimental_bearer_token`，名称与 Key 可本地修改；新装默认显示名是 `API1` 和 `API2`。
-- GLM：写入 `responses` 协议、GLM 模型、Key 和当前 Codex Home 下的 `models.json`；切换时会同步未归档会话线程的模型字段，重新打开旧会话也会跟随当前 API 模型。团队项目 ID 使用 `proj_xxxxxxx`，保存时自动纠正粘贴产生的空格分隔。
-- aqyimin.chat GPT 中转：识别 `aqyimin.chat` / `www.aqyimin.chat`，切回该供应商时恢复原配置中的 GPT 图像能力相关模型目录和推理配置；切换 GLM 时改用 GLM 专用 `models.json`，避免两套模型能力配置互相污染。
+- GLM：写入 `responses` 协议、GLM 模型、Key 和当前 Codex Home 下的 `models-glm.json`；切换时会同步未归档会话线程的模型字段，重新打开旧会话也会跟随当前 API 模型。团队项目 ID 使用 `proj_xxxxxxx`，保存时自动纠正粘贴产生的空格分隔。旧版本写入的纯 GLM `models.json` 会自动迁移到独立文件。
+- aqyimin.chat GPT 中转：识别 `aqyimin.chat` / `www.aqyimin.chat`，切回该供应商时恢复原配置中的 GPT 模型、图像能力相关模型目录和推理配置；切换 GLM 时使用独立的 `models-glm.json`，不再污染 API1 原来的 `models.json`。旧版本留下的歧义 `models.json` 备份不会被恢复到 API1。
+- API1 / API2 互相切换时直接断开另一路并写入新配置，不再弹出“保留共存”选择；涉及 GLM 或 OpenAI 直连时仍保留确认提示。
 - GLM 切换会清掉旧配置里遗留的 `env_key` 和 `http_headers`（尤其是 `OPENAI_API_KEY`、`x-openai-actor-authorization`），避免认证来源歧义和应用专用请求头破坏 GLM 流式响应；`experimental_bearer_token` 是唯一认证来源。
 - 保留官方登录态与 GLM 不冲突：GLM 始终写入 `requires_openai_auth = false` 并使用自己的 bearer token；官方凭据缓存保持不变，切回 OpenAI 时继续使用。
 - “保持同一 provider 标签”默认开启。第三方供应商切换时复用首次读取到的 provider key（本机当前为 `cch_gz`），避免新会话按多个标签分裂。
@@ -45,7 +46,7 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 ```toml
 model = "glm-5.3-flash"
 model_reasoning_effort = "max"
-model_catalog_json = "C:/Users/<用户名>/.codex/models.json"
+model_catalog_json = "C:/Users/<用户名>/.codex/models-glm.json"
 
 [model_providers.<稳定标签>]
 name = "GLM"
@@ -85,10 +86,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.2.25.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.2.25.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.2.25.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.2.25.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.2.27.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.2.27.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.2.27.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.2.27.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -99,16 +100,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.2.25.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.2.25.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.2.27.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.2.27.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.25.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.25.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.25.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.27.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.27.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.27.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 

@@ -112,6 +112,34 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual("C:/Users/test/.codex/gpt-models.json", restored["model_catalog_json"])
         self.assertEqual("https://www.aqyimin.chat/v1", restored["model_providers"]["custom"]["base_url"])
 
+    def test_legacy_ambiguous_models_catalog_is_not_restored_to_api1(self) -> None:
+        original = (
+            'model_provider = "custom"\n'
+            'model = "glm-5.3-flash"\n'
+            'model_reasoning_effort = "max"\n'
+            f'model_catalog_json = "{(self.home / "models.json").as_posix()}"\n\n'
+            '[model_providers.custom]\n'
+            'name = "GLM"\n'
+            'base_url = "https://open.bigmodel.cn/api/v1"\n'
+            'wire_api = "responses"\n'
+            'requires_openai_auth = false\n'
+        )
+        (self.home / "config.toml").write_text(original, encoding="utf-8")
+        self.home.joinpath("provider-switch-backups").mkdir()
+        self.home.joinpath("provider-switch-backups/image-capability.json").write_text(
+            f'{{"model_catalog_json":"{(self.home / "models.json").as_posix()}",'
+            '"model_reasoning_effort":"max"}',
+            encoding="utf-8",
+        )
+        profile = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://www.aqyimin.chat/v1", "gpt-5.6-sol", requires_openai_auth=True
+        )
+        self.manager.apply_profile(profile, "api-secret", True, "custom")
+        parsed = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertEqual("gpt-5.6-sol", parsed["model"])
+        self.assertNotIn("model_catalog_json", parsed)
+        self.assertNotIn("model_reasoning_effort", parsed)
+
     def test_glm_switch_removes_stale_auth_and_header_fields(self) -> None:
         (self.home / "config.toml").write_text(
             'model_provider = "custom"\n'
