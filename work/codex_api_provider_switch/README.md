@@ -1,4 +1,4 @@
-# Codex Provider Switch v1.2.23
+# Codex Provider Switch v1.2.24
 
 源码入口：`codex_api_provider_switch.py`
 

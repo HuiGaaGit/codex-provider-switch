@@ -141,6 +141,7 @@ class StatusPill(QLabel):
 
 class ProviderCard(GlassPanel):
     switch_requested = Signal(str)
+    quota_requested = Signal(str)
 
     def __init__(self, profile_id: str) -> None:
         super().__init__()
@@ -199,6 +200,10 @@ class ProviderCard(GlassPanel):
         root.addStretch(1)
 
         footer = QHBoxLayout()
+        self.quota_button = QPushButton("查额度")
+        self.quota_button.setProperty("kind", "secondary")
+        self.quota_button.clicked.connect(lambda: self.quota_requested.emit(self.profile_id))
+        footer.addWidget(self.quota_button)
         self.switch_button = QPushButton("切换")
         self.switch_button.setProperty("kind", "primary")
         self.switch_button.clicked.connect(lambda: self.switch_requested.emit(self.profile_id))
@@ -209,6 +214,7 @@ class ProviderCard(GlassPanel):
     def set_profile(self, profile: ProviderProfile) -> None:
         self.title.setText(profile.display_name)
         self.model.setText(profile.model or ("Codex 官方默认" if profile.kind == "official" else "尚未配置模型"))
+        self.quota_button.setVisible(profile.kind != "official")
 
     def _polish(self, widget: QWidget) -> None:
         widget.style().unpolish(widget)
@@ -246,10 +252,14 @@ class ProviderCard(GlassPanel):
                 "官方账号未登录" if self.profile_id == "openai" else "尚未完成供应商配置"
             )
             self.setToolTip(self.health.text())
+            self.quota_button.setEnabled(False)
         elif not active:
             self.active_pill.set_tone("neutral", "待机")
             self.switch_button.setText("切换")
             self.switch_button.setEnabled(True)
+            self.quota_button.setEnabled(True)
+        elif available:
+            self.quota_button.setEnabled(True)
         self._polish(self.switch_button)
 
     def clear_telemetry(
@@ -943,6 +953,7 @@ class ProviderSwitchWindow(QMainWindow):
         for index, profile_id in enumerate(("openai", "relay1", "relay2", "glm")):
             card = ProviderCard(profile_id)
             card.switch_requested.connect(self.confirm_switch)
+            card.quota_requested.connect(self.query_provider_quota)
             self.provider_cards[profile_id] = card
             self.cards_grid.addWidget(card, index // 2, index % 2)
         layout.addWidget(cards, 1)
@@ -2202,6 +2213,39 @@ class ProviderSwitchWindow(QMainWindow):
             active_name = active.display_name if active is not None else active_id
             self._set_footer(f"{active_name} 的请求健康记录已更新；监控不会主动发起探测。")
         self._update_tray_status(telemetry, bad)
+
+    def query_provider_quota(self, profile_id: str) -> None:
+        """Run a quota-only request without changing the active route."""
+        if getattr(self, "_quota_query_in_progress", False):
+            return
+        profile = self.controller.settings.profiles.get(profile_id)
+        if profile is None or profile.kind == "official":
+            QMessageBox.information(self, "额度查询", "OpenAI 官方订阅额度由 Codex 显示。")
+            return
+        if not self.controller.profile_ready(profile_id):
+            QMessageBox.information(self, "额度查询", f"请先完成 {profile.display_name} 的 API 地址、模型和 Key 配置。")
+            return
+        self._quota_query_in_progress = True
+        self._set_busy(True, f"正在查询 {profile.display_name} 额度")
+        self._run_job(
+            lambda: self.controller.query_quota(profile_id),
+            lambda result: self._handle_quota_query(profile_id, result),
+            lambda error: self._handle_quota_query_error(profile_id, error),
+        )
+
+    def _handle_quota_query(self, profile_id: str, result: ProviderTelemetry) -> None:
+        self._quota_query_in_progress = False
+        self._set_busy(False, "额度查询完成")
+        self._last_telemetry[profile_id] = result
+        card = self.provider_cards.get(profile_id)
+        if card is not None:
+            card.set_telemetry(result)
+        self._set_footer(f"{self.controller.settings.profiles[profile_id].display_name}：{result.quota_message}")
+
+    def _handle_quota_query_error(self, profile_id: str, error: BaseException) -> None:
+        self._quota_query_in_progress = False
+        self._set_busy(False, "额度查询失败")
+        self._set_footer(f"额度查询失败：{error}")
 
     def _update_tray_status(
         self,

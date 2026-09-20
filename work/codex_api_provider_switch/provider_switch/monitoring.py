@@ -212,6 +212,7 @@ def check_provider(
     codex_home: Path | None = None,
     retain_official_auth: bool = True,
     auth_status: AuthStatus | None = None,
+    probe_health: bool = True,
 ) -> ProviderTelemetry:
     if not profile.enabled:
         health = HealthResult(profile.profile_id, "disabled", "已停用", checked_at=_now_label())
@@ -249,8 +250,8 @@ def check_provider(
                 if quota:
                     health = HealthResult(
                         profile.profile_id,
-                        "healthy",
-                        "GLM 链路与凭据正常",
+                        "healthy" if probe_health else "unknown",
+                        "GLM 链路与凭据正常" if probe_health else "额度已更新（未检查链路）",
                         quota_latency,
                         _now_label(),
                     )
@@ -270,6 +271,16 @@ def check_provider(
                 quota_message = f"额度接口 HTTP {status}"
         except MonitoringError as exc:
             quota_message = f"额度查询失败：{exc}"
+
+    if not probe_health:
+        health = HealthResult(
+            profile.profile_id,
+            "unknown",
+            "额度已查询（未检查链路）",
+            quota_latency,
+            _now_label(),
+        )
+        return ProviderTelemetry(profile.profile_id, health, quota, quota_message)
 
     try:
         status, _, latency = _http_json(_models_url(profile.base_url), api_key)

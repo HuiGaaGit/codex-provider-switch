@@ -458,6 +458,21 @@ class ApplicationController:
             return {profile.profile_id: health}
         return {profile.profile_id: item}
 
+    def query_quota(self, profile_id: str) -> ProviderTelemetry:
+        """Query a provider's quota without switching or probing its health."""
+        profile = self.settings.profiles.get(profile_id)
+        if profile is None:
+            raise ValueError("供应商不存在")
+        if profile.kind == "official":
+            raise ValueError("OpenAI 官方订阅额度由 Codex 显示")
+        return check_provider(
+            profile,
+            self.credentials.get(profile_id, ""),
+            codex_home=self.codex_home,
+            retain_official_auth=self.settings.retain_official_auth,
+            probe_health=False,
+        )
+
     def token_usage(self) -> dict[str, TokenUsage]:
         switch_log = self.store.data_root / SWITCH_LOG_NAME
         return scan_token_usage_seconds(
