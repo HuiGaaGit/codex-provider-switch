@@ -252,10 +252,19 @@ class ProviderCard(GlassPanel):
             self.switch_button.setEnabled(True)
         self._polish(self.switch_button)
 
-    def clear_telemetry(self, *, active: bool = False) -> None:
-        """Clear stale probe data; only the active provider is probed on demand."""
+    def clear_telemetry(
+        self, *, active: bool = False, preserve_quota: bool = False
+    ) -> None:
+        """Clear health data while optionally retaining the last quota result.
+
+        Health monitoring intentionally checks only the active provider. Quota
+        results are independent cached data, so switching providers must not
+        make a previously successful quota lookup disappear.
+        """
         self.health.setText("等待当前供应商检查" if active else "尚未检查（仅检查当前供应商）")
         self.health.setProperty("class", "body")
+        if preserve_quota:
+            return
         self.quota.setVisible(False)
         self.quota.setValue(0)
         self.quota.setToolTip("")
@@ -2043,7 +2052,10 @@ class ProviderSwitchWindow(QMainWindow):
             for profile_id, card in self.provider_cards.items():
                 profile = self.controller.settings.profiles[profile_id]
                 is_active = profile_id == active
-                card.clear_telemetry(active=is_active)
+                card.clear_telemetry(
+                    active=is_active,
+                    preserve_quota=profile_id in self._last_telemetry,
+                )
                 card.set_profile(profile)
                 card.set_active(is_active, snapshot.model_provider if is_active else "")
                 if profile_id == "openai":
@@ -2152,11 +2164,16 @@ class ProviderSwitchWindow(QMainWindow):
             self._last_telemetry = {}
             self._telemetry_active_id = None
             return
-        self._last_telemetry = dict(telemetry)
+        # Keep quota results for providers that are not currently active. The
+        # health part is still updated only for the current provider.
+        self._last_telemetry.update(telemetry)
         self._telemetry_active_id = active_id
         for profile_id, card in self.provider_cards.items():
             is_active = profile_id == active_id
-            card.clear_telemetry(active=is_active)
+            card.clear_telemetry(
+                active=is_active,
+                preserve_quota=profile_id in self._last_telemetry,
+            )
             item = telemetry.get(profile_id) if is_active else None
             if item is not None:
                 card.set_telemetry(item)
