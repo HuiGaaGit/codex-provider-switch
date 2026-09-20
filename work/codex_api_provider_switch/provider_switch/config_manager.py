@@ -6,6 +6,7 @@ import re
 import shutil
 import threading
 import tomllib
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -249,6 +250,58 @@ class ConfigManager:
         self.backup_directory = self.codex_home / BACKUP_DIRECTORY_NAME
         self._lock = threading.RLock()
 
+    @property
+    def image_capability_backup(self) -> Path:
+        return self.backup_directory / "image-capability.json"
+
+    @staticmethod
+    def _is_aqyimin_url(value: Any) -> bool:
+        try:
+            host = (urllib.parse.urlsplit(str(value)).hostname or "").casefold()
+        except ValueError:
+            return False
+        return host == "aqyimin.chat" or host.endswith(".aqyimin.chat")
+
+    def _capture_aqyimin_image_config(self, text: str) -> None:
+        """Remember image-capable top-level settings before switching to GLM."""
+        try:
+            parsed = tomllib.loads(text)
+            provider_key = str(parsed.get("model_provider", ""))
+            provider = parsed.get("model_providers", {}).get(provider_key, {})
+            if not isinstance(provider, dict) or not self._is_aqyimin_url(provider.get("base_url")):
+                return
+            values = {
+                key: parsed[key]
+                for key in ("model_catalog_json", "model_reasoning_effort")
+                if key in parsed
+            }
+            if not values:
+                return
+            self.backup_directory.mkdir(parents=True, exist_ok=True)
+            self.image_capability_backup.write_text(
+                json.dumps(values, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except (OSError, TypeError, tomllib.TOMLDecodeError):
+            return
+
+    def _restore_aqyimin_image_config(self, text: str) -> str:
+        if not self.image_capability_backup.exists():
+            # A GLM switch may have just injected the GLM catalog.  Do not
+            # leave that catalog attached to the GPT-compatible provider when
+            # the original aqyimin config had no custom catalog.
+            return _set_top_level(text, "model_catalog_json", None)
+        try:
+            values = json.loads(self.image_capability_backup.read_text(encoding="utf-8"))
+            if not isinstance(values, dict):
+                return text
+            updated = text
+            for key in ("model_catalog_json", "model_reasoning_effort"):
+                if key in values:
+                    updated = _set_top_level(updated, key, values[key])
+            return updated
+        except (OSError, ValueError, TypeError):
+            return text
+
     def ensure_config(self) -> None:
         if self.config_path.exists():
             return
@@ -338,6 +391,8 @@ class ConfigManager:
         if not api_key:
             raise ConfigError(f"{profile.display_name} 尚未配置 API Key。")
         provider_key = stable_provider_key if preserve_provider_key else profile.provider_key
+        if profile.kind == "glm":
+            self._capture_aqyimin_image_config(original)
         updated = _set_top_level(original, "model_provider", provider_key)
         updated = _set_top_level(updated, "model", profile.model)
         if profile.kind == "glm":
@@ -347,6 +402,8 @@ class ConfigManager:
             updated = _set_top_level(
                 updated, "model_catalog_json", catalog_path.resolve(strict=False).as_posix()
             )
+        elif self._is_aqyimin_url(profile.base_url):
+            updated = self._restore_aqyimin_image_config(updated)
         else:
             updated = _set_top_level(updated, "model_catalog_json", None)
         provider_values = {

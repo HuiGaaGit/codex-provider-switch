@@ -82,6 +82,36 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual(catalog.resolve().as_posix(), parsed["model_catalog_json"])
         self.assertEqual("responses", parsed["model_providers"]["cch_gz"]["wire_api"])
 
+    def test_aqyimin_image_catalog_is_restored_after_glm_switch(self) -> None:
+        original = (
+            'model_provider = "custom"\n'
+            'model = "gpt-5.6-sol"\n'
+            'model_catalog_json = "C:/Users/test/.codex/gpt-models.json"\n\n'
+            '[model_providers.custom]\n'
+            'name = "aqyimin"\n'
+            'base_url = "https://www.aqyimin.chat/v1"\n'
+            'wire_api = "responses"\n'
+            'requires_openai_auth = true\n'
+        )
+        (self.home / "config.toml").write_text(original, encoding="utf-8")
+        glm_catalog = self.home / "models.json"
+        glm_catalog.write_text(
+            '{"models": [{"slug": "glm-5.3-flash", "display_name": "GLM", "context_window": 1000}]}',
+            encoding="utf-8",
+        )
+        glm = ProviderProfile("glm", "GLM", "glm", "ZAI", "https://open.bigmodel.cn/api/v1", "glm-5.3-flash")
+        self.manager.apply_profile(glm, "glm-secret", True, "custom", glm_catalog)
+        glm_config = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertEqual(glm_catalog.resolve().as_posix(), glm_config["model_catalog_json"])
+
+        aqyimin = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://www.aqyimin.chat/v1", "gpt-5.6-sol", requires_openai_auth=True
+        )
+        self.manager.apply_profile(aqyimin, "api-secret", True, "custom")
+        restored = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertEqual("C:/Users/test/.codex/gpt-models.json", restored["model_catalog_json"])
+        self.assertEqual("https://www.aqyimin.chat/v1", restored["model_providers"]["custom"]["base_url"])
+
     def test_glm_switch_removes_stale_auth_and_header_fields(self) -> None:
         (self.home / "config.toml").write_text(
             'model_provider = "custom"\n'
