@@ -374,6 +374,8 @@ def scan_token_usage_seconds(
     codex_home: Path,
     lookback_seconds: float = 30 * 86400,
     switch_log_path: Path | None = None,
+    current_profile_id: str | None = None,
+    config_mtime: float | None = None,
 ) -> dict[str, TokenUsage]:
     cutoff = datetime.now().timestamp() - max(60.0, lookback_seconds)
     timeline = load_switch_timeline(switch_log_path) if switch_log_path is not None else []
@@ -464,6 +466,9 @@ def scan_token_usage_seconds(
                     owner = timeline[idx][1]
                 else:
                     owner = "unknown"
+            if current_profile_id and config_mtime is not None and event_time >= config_mtime:
+                attribution = "current_config"
+                owner = current_profile_id
             item = usage.get(owner)
             if item is None:
                 item = TokenUsage(owner, attribution=attribution, model_provider=provider_key)

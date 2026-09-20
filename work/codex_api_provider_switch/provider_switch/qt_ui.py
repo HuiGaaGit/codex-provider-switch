@@ -1115,7 +1115,12 @@ class ProviderSwitchWindow(QMainWindow):
             lambda: (
                 seconds,
                 self.monitor_history.load_codex_request_records(
-                    self.controller.codex_home, seconds
+                    self.controller.codex_home,
+                    seconds,
+                    current_profile_id=self.controller.detect_active_profile(),
+                    config_mtime=self.controller.config.config_path.stat().st_mtime
+                    if self.controller.config.config_path.exists()
+                    else None,
                 ),
             ),
             self._render_monitor_page,

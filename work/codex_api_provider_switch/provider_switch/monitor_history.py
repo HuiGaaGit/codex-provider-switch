@@ -88,7 +88,13 @@ class MonitorHistory:
         return records
 
     @staticmethod
-    def load_codex_request_records(codex_home: Path, max_age_seconds: float) -> list[HealthRecord]:
+    def load_codex_request_records(
+        codex_home: Path,
+        max_age_seconds: float,
+        *,
+        current_profile_id: str | None = None,
+        config_mtime: float | None = None,
+    ) -> list[HealthRecord]:
         """Read request outcomes emitted by Codex itself.
 
         This is deliberately local log ingestion: it never sends a probe to a
@@ -175,6 +181,12 @@ class MonitorHistory:
                                     switch_index = bisect.bisect_right(switch_times, ts) - 1
                                     if switch_index >= 0:
                                         provider = switch_profiles[switch_index]
+                                if (
+                                    current_profile_id
+                                    and config_mtime is not None
+                                    and ts >= config_mtime
+                                ):
+                                    provider = current_profile_id
                                 latency_ms = None
                                 # Codex exposes the time to the first model
                                 # token on task_complete. This is the

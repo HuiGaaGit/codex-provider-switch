@@ -475,13 +475,33 @@ class ApplicationController:
 
     def token_usage(self) -> dict[str, TokenUsage]:
         switch_log = self.store.data_root / SWITCH_LOG_NAME
+        active = self.detect_active_profile()
+        try:
+            config_mtime = self.config.config_path.stat().st_mtime
+        except OSError:
+            config_mtime = None
         return scan_token_usage_seconds(
-            self.codex_home, self.settings.usage_lookback_days * 86400, switch_log
+            self.codex_home,
+            self.settings.usage_lookback_days * 86400,
+            switch_log,
+            current_profile_id=active,
+            config_mtime=config_mtime,
         )
 
     def token_usage_seconds(self, lookback_seconds: float) -> dict[str, TokenUsage]:
         switch_log = self.store.data_root / SWITCH_LOG_NAME
-        return scan_token_usage_seconds(self.codex_home, lookback_seconds, switch_log)
+        active = self.detect_active_profile()
+        try:
+            config_mtime = self.config.config_path.stat().st_mtime
+        except OSError:
+            config_mtime = None
+        return scan_token_usage_seconds(
+            self.codex_home,
+            lookback_seconds,
+            switch_log,
+            current_profile_id=active,
+            config_mtime=config_mtime,
+        )
 
     def _record_switch(self, profile_id: str, provider_key: str) -> None:
         self.store.data_root.mkdir(parents=True, exist_ok=True)
