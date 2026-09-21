@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.3.0`
+当前交付版本：`1.3.1`
 
 ## 日常使用
 
@@ -86,10 +86,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.3.0.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.0.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.0.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.0.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.1.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.1.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.1.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.1.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -100,16 +100,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.0.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.0.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.1.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.1.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.0.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.0.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.0.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.1.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.1.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.1.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
@@ -221,6 +221,12 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 - 新增 Threadripper 官方包一键安装与 SHA-256 校验。
 - 新增供应商健康、GLM/自定义额度和本机 Token 统计。
 - API Key 改为 Windows DPAPI 本地加密保存。
+
+## 1.3.1 变更
+
+- 修复安装/升级时托盘常驻进程无法关闭的问题。非静默安装仍提供“关闭并继续 / 取消”选择；确认关闭后优先通过本地 IPC 让新版本干净退出，旧版本或无响应进程只按 `Codex Provider Switch.exe` 文件过滤强制关闭，不会结束 `codex.exe` 或其他应用。
+- 新增 `--installer-shutdown` 隐藏命令，并让安装器在文件替换前主动请求退出；安装完成后不会自动重启后台进程，避免安装器卡在关闭阶段。
+- 1.3.1 产物 SHA-256：便携版 `0674EBB245283ED2DD634DA57572C241237826F94664837B68E8BEFD9BDCAABA`；安装包 `4BCF1281A7240B67A631330CA460F4F6A9777B56D69821A71A0EE52C5BCD1B4C`。
 
 ## 1.3.0 变更
 

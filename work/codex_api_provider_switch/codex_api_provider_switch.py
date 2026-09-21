@@ -1,4 +1,4 @@
-"""Codex Provider Switch v1.3.0 entry point."""
+"""Codex Provider Switch v1.3.1 entry point."""
 
 from __future__ import annotations
 
@@ -86,6 +86,11 @@ def main() -> int:
     )
     parser.add_argument("--demo", action="store_true", help="open the UI with isolated demo data")
     parser.add_argument("--tray", action="store_true", help="start minimized in the system tray")
+    parser.add_argument(
+        "--installer-shutdown",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
     if args.version:
         print(f"{APP_NAME} {APP_VERSION}")
@@ -94,6 +99,16 @@ def main() -> int:
         return run_smoke_test()
     if args.tray_smoke_test:
         return run_tray_smoke_test()
+    if args.installer_shutdown:
+        # This is intentionally a no-op when the Qt runtime is unavailable;
+        # the installer still has a process-name-filtered force-close path.
+        try:
+            from provider_switch.qt_ui import request_application_shutdown
+
+            request_application_shutdown()
+        except ImportError:
+            pass
+        return 0
     if args.demo:
         temporary = tempfile.TemporaryDirectory(prefix="codex-provider-switch-demo-")
         controller = build_demo_controller(Path(temporary.name))

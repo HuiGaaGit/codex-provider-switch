@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import queue
 import subprocess
+import sys
 import threading
 import tomllib
 from datetime import datetime
@@ -82,6 +83,33 @@ def _open_path(path: Path) -> None:
         os.startfile(str(path))  # type: ignore[attr-defined]
     else:
         subprocess.Popen(["xdg-open", str(path)])
+
+
+def _send_instance_command(command: bytes, timeout_ms: int = 500) -> bool:
+    """Send a command to the existing tray instance, if one is running."""
+    socket = QLocalSocket()
+    socket.connectToServer(INSTANCE_SERVER_NAME)
+    if not socket.waitForConnected(timeout_ms):
+        socket.abort()
+        return False
+    socket.write(command)
+    socket.waitForBytesWritten(timeout_ms)
+    socket.disconnectFromServer()
+    return True
+
+
+def _current_executable_path() -> str:
+    """Return a stable identity for this installed copy of the application."""
+    try:
+        return str(Path(sys.argv[0]).resolve()).casefold()
+    except OSError:
+        return os.path.normcase(os.path.abspath(sys.argv[0]))
+
+
+def request_application_shutdown(timeout_ms: int = 700) -> bool:
+    """Ask the running tray process to exit before an installer replaces it."""
+    identity = _current_executable_path().encode("utf-8", errors="replace")
+    return _send_instance_command(b"shutdown|" + identity, timeout_ms)
 
 
 class MaterialBackdrop(QWidget):
@@ -2854,15 +2882,7 @@ class SetupWizard(QDialog):
 
 
 def _activate_existing_instance() -> bool:
-    socket = QLocalSocket()
-    socket.connectToServer(INSTANCE_SERVER_NAME)
-    if not socket.waitForConnected(350):
-        socket.abort()
-        return False
-    socket.write(b"show")
-    socket.waitForBytesWritten(350)
-    socket.disconnectFromServer()
-    return True
+    return _send_instance_command(b"show", 350)
 
 
 def run_qt_application(
@@ -2891,8 +2911,26 @@ def run_qt_application(
         def show_existing_window() -> None:
             while server is not None and server.hasPendingConnections():
                 connection = server.nextPendingConnection()
-                window.restore_from_tray()
+                # The installer asks the running instance to leave the tray
+                # before Restart Manager gets involved.  Unknown commands
+                # retain the existing single-instance "show" behavior.
+                payload = b""
+                if connection.bytesAvailable() == 0:
+                    connection.waitForReadyRead(350)
+                if connection.bytesAvailable() > 0:
+                    payload = bytes(connection.readAll()).strip().lower()
+                shutdown_prefix = b"shutdown|"
+                requested_identity = ""
+                if payload.startswith(shutdown_prefix):
+                    requested_identity = payload[len(shutdown_prefix) :].decode(
+                        "utf-8", errors="replace"
+                    )
+                if requested_identity and requested_identity == _current_executable_path():
+                    window.exit_application()
+                else:
+                    window.restore_from_tray()
                 connection.disconnectFromServer()
+                connection.deleteLater()
 
         server.newConnection.connect(show_existing_window)
     if start_hidden and window.controller.settings.setup_complete and window.tray_icon is not None:
