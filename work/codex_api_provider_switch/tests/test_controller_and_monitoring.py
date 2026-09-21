@@ -21,6 +21,7 @@ from provider_switch.monitoring import (
     scan_token_usage,
     scan_token_usage_seconds,
     load_switch_timeline,
+    check_provider,
 )
 from provider_switch.monitor_history import MonitorHistory
 from provider_switch.settings import SettingsStore
@@ -73,6 +74,58 @@ class MonitoringTests(unittest.TestCase):
             "relay2", "API2", "relay", "relay_2", "https://relay.example/v1/responses"
         )
         self.assertEqual("https://relay.example/v1/usage?days=30", _relay_quota_url(profile))
+
+    def test_quota_only_queries_relay_usage_without_model_probe(self) -> None:
+        profile = ProviderProfile("relay1", "API1", "relay", "relay_1", "https://relay.example/v1", "gpt-5.6-sol")
+        with patch(
+            "provider_switch.monitoring._http_json",
+            return_value=(200, {"remaining": 12, "total": 100, "unit": "USD"}, 17),
+        ) as request:
+            result = check_provider(profile, "key", probe_health=False)
+        self.assertEqual("unknown", result.health.state)
+        self.assertEqual(12, result.quota[0].remaining)
+        self.assertEqual(1, request.call_count)
+        self.assertIn("/v1/usage?days=30", request.call_args.args[0])
+
+    def test_quota_only_does_not_require_a_model_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            home = root / ".codex"
+            home.mkdir(parents=True)
+            (home / "config.toml").write_text("model = \"gpt-5.6-sol\"\n", encoding="utf-8")
+            settings = AppSettings(
+                codex_home=str(home),
+                setup_complete=True,
+                auto_restart=False,
+                auto_sync_history=False,
+            )
+            settings.profiles["relay1"].base_url = "https://relay.example/v1"
+            settings.profiles["relay1"].model = ""
+            store = SettingsStore(root / "data")
+            store.save(settings, {"relay1": "redacted"})
+            controller = ApplicationController(store)
+
+            self.assertTrue(controller.quota_ready("relay1"))
+            with patch("provider_switch.controller.check_provider") as check:
+                check.return_value = ProviderTelemetry(
+                    "relay1",
+                    HealthResult("relay1", "unknown", "额度已查询（未检查链路）"),
+                )
+                controller.query_quota("relay1")
+            check.assert_called_once()
+
+    def test_glm_quota_success_still_checks_model_link(self) -> None:
+        profile = ProviderProfile("glm", "GLM", "glm", "ZAI", "https://open.bigmodel.cn/api/v1", "glm-5.3-flash")
+        profile.quota_url = "https://open.bigmodel.cn/quota"
+        quota_payload = {"data": {"limits": [{"type": "TOKENS_LIMIT", "unit": 3, "percentage": 10}]}}
+        with patch(
+            "provider_switch.monitoring._http_json",
+            side_effect=[(200, quota_payload, 9), (503, {}, 21)],
+        ) as request:
+            result = check_provider(profile, "key")
+        self.assertEqual("offline", result.health.state)
+        self.assertEqual(1, len(result.quota))
+        self.assertEqual(2, request.call_count)
 
     def test_sub2api_quota_parser_uses_remaining(self) -> None:
         profile = ProviderProfile("relay2", "API2", "relay", "relay_2")
@@ -277,6 +330,89 @@ class MonitoringTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_request_health_uses_current_request_log_without_network_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            home = root / ".codex"
+            home.mkdir()
+            (home / "config.toml").write_text(
+                'model_provider = "cch_gz"\nmodel = "glm-5.3-flash"\n\n'
+                '[model_providers.cch_gz]\nname = "GLM"\n'
+                'base_url = "https://open.bigmodel.cn/api/v1"\n'
+                'wire_api = "responses"\nexperimental_bearer_token = "redacted"\n',
+                encoding="utf-8",
+            )
+            settings = AppSettings(
+                codex_home=str(home),
+                setup_complete=True,
+                stable_provider_key="cch_gz",
+                active_profile_id="glm",
+                auto_restart=False,
+                auto_sync_history=False,
+            )
+            settings.profiles["glm"].base_url = "https://open.bigmodel.cn/api/v1"
+            settings.profiles["glm"].model = "glm-5.3-flash"
+            store = SettingsStore(root / "data")
+            store.save(settings, {"glm": "redacted"})
+            session_dir = home / "sessions" / "2026" / "09" / "19"
+            session_dir.mkdir(parents=True)
+            (session_dir / "request.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps({"timestamp": "2026-09-19T01:00:00+00:00", "type": "session_meta", "payload": {"model_provider": "cch_gz"}}),
+                        json.dumps({"timestamp": "2026-09-19T01:00:01+00:00", "type": "event_msg", "payload": {"type": "task_complete", "time_to_first_token_ms": 321}}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            controller = ApplicationController(store)
+            with patch("provider_switch.controller.check_provider") as probe:
+                health = controller.request_health(365 * 86400)
+            probe.assert_not_called()
+            self.assertEqual(["glm"], list(health))
+            self.assertEqual("healthy", health["glm"].health.state)
+            self.assertEqual(321, health["glm"].health.latency_ms)
+
+    def test_request_records_normalize_stable_provider_labels_for_the_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            home = root / ".codex"
+            home.mkdir()
+            (home / "config.toml").write_text(
+                'model_provider = "cch_gz"\nmodel = "gpt-5.6-sol"\n\n'
+                '[model_providers.cch_gz]\nname = "API1"\n'
+                'base_url = "https://relay.example/v1"\nwire_api = "responses"\n',
+                encoding="utf-8",
+            )
+            settings = AppSettings(
+                codex_home=str(home),
+                setup_complete=True,
+                stable_provider_key="cch_gz",
+                active_profile_id="relay1",
+                auto_restart=False,
+                auto_sync_history=False,
+            )
+            settings.profiles["relay1"].base_url = "https://relay.example/v1"
+            settings.profiles["relay1"].model = "gpt-5.6-sol"
+            store = SettingsStore(root / "data")
+            store.save(settings, {"relay1": "redacted"})
+            session_dir = home / "sessions" / "2026" / "09" / "19"
+            session_dir.mkdir(parents=True)
+            (session_dir / "request.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps({"timestamp": "2026-09-19T01:00:00+00:00", "type": "session_meta", "payload": {"model_provider": "cch_gz"}}),
+                        json.dumps({"timestamp": "2026-09-19T01:00:01+00:00", "type": "event_msg", "payload": {"type": "task_complete"}}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            controller = ApplicationController(store)
+            records = controller.request_records(365 * 86400)
+            self.assertEqual(["relay1"], [record.profile_id for record in records])
+
     def test_disconnect_does_nothing_when_active_provider_is_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)

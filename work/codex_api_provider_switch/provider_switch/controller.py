@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .auth_manager import AuthStatus, CodexAuthError, CodexAuthManager
 from .catalog import ModelCatalogManager
@@ -13,6 +13,7 @@ from .config_manager import ConfigManager, discover_codex_homes
 from .constants import SWITCH_LOG_NAME
 from .models import AppSettings, ConfigSnapshot, HealthResult, ProviderTelemetry, TokenUsage
 from .monitoring import check_provider, scan_token_usage, scan_token_usage_seconds
+from .monitor_history import HealthRecord, MonitorHistory
 from .settings import SettingsError, SettingsStore, validate_settings
 from .thread_state import ThreadStateError, sync_thread_models
 from .threadripper import find_threadripper, sync_history, threadripper_version
@@ -160,6 +161,21 @@ class ApplicationController:
             profile.base_url
             and profile.model
             and self.credentials.get(profile_id, "").strip()
+        )
+
+    def quota_ready(self, profile_id: str) -> bool:
+        """Return whether a provider has enough data for a quota-only request.
+
+        A quota lookup does not need a model selection. Keeping this separate
+        from ``profile_ready`` lets an unused provider expose its quota while
+        it is still being configured for switching.
+        """
+        profile = self.settings.profiles.get(profile_id)
+        if profile is None or not profile.enabled or profile.kind == "official":
+            return False
+        return bool(
+            self.credentials.get(profile_id, "").strip()
+            and (profile.quota_url.strip() or profile.base_url.strip())
         )
 
     def relay_fallback(self) -> str:
@@ -426,6 +442,87 @@ class ApplicationController:
         """Probe only the active provider; callers should not fan out API checks."""
         return self.check_active()
 
+    def request_health(self, max_age_seconds: float = 3600.0) -> dict[str, ProviderTelemetry]:
+        """Build health telemetry from Codex request outcomes without probing a provider.
+
+        The desktop UI uses this path for its health dashboard so refreshing the
+        application cannot create synthetic requests or alter provider state.
+        """
+        try:
+            active_id = self.detect_active_profile() or "unknown"
+        except (OSError, ValueError):
+            active_id = self.settings.active_profile_id or "unknown"
+        records = self.request_records(max_age_seconds)
+        latest: dict[str, Any] = {}
+        for record in records:
+            profile_id = self._request_record_profile_id(record.profile_id, active_id)
+            if profile_id:
+                latest[profile_id] = record
+        result: dict[str, ProviderTelemetry] = {}
+        messages = {
+            "healthy": "最近一次 Codex 请求成功",
+            "warning": "最近一次 Codex 请求已中止",
+            "offline": "最近一次 Codex 请求失败",
+        }
+        for profile_id, record in latest.items():
+            if active_id in self.settings.profiles and profile_id != active_id:
+                continue
+            try:
+                checked_at = datetime.fromtimestamp(record.timestamp).strftime("%H:%M:%S")
+            except (OSError, OverflowError, ValueError):
+                checked_at = ""
+            result[profile_id] = ProviderTelemetry(
+                profile_id,
+                HealthResult(
+                    profile_id,
+                    record.state,
+                    messages.get(record.state, "最近一次 Codex 请求已记录"),
+                    record.latency_ms,
+                    checked_at,
+                ),
+                quota_message="额度请使用卡片上的“查额度”单独查询",
+            )
+        return result
+
+    def request_records(self, max_age_seconds: float = 3600.0) -> list[HealthRecord]:
+        """Read and normalize Codex request outcomes for the monitoring UI."""
+        try:
+            active_id = self.detect_active_profile() or "unknown"
+            config_mtime = (
+                self.config.config_path.stat().st_mtime
+                if self.config.config_path.exists()
+                else None
+            )
+        except (OSError, ValueError):
+            active_id = self.settings.active_profile_id or "unknown"
+            config_mtime = None
+        raw_records = MonitorHistory.load_codex_request_records(
+            self.codex_home,
+            max(60.0, float(max_age_seconds)),
+            current_profile_id=active_id,
+            config_mtime=config_mtime,
+        )
+        normalized: list[HealthRecord] = []
+        for record in raw_records:
+            profile_id = self._request_record_profile_id(record.profile_id, active_id)
+            if not profile_id:
+                continue
+            normalized.append(
+                HealthRecord(record.timestamp, profile_id, record.state, record.latency_ms)
+            )
+        return normalized
+
+    def _request_record_profile_id(self, raw_id: str, active_id: str) -> str:
+        value = str(raw_id or "").strip()
+        if value in self.settings.profiles:
+            return value
+        for profile_id, profile in self.settings.profiles.items():
+            if value and value.casefold() == profile.provider_key.casefold():
+                return active_id if profile.provider_key == self.settings.stable_provider_key else profile_id
+        if value and value.casefold() == self.settings.stable_provider_key.casefold():
+            return active_id if active_id in self.settings.profiles else ""
+        return ""
+
     def check_active(self) -> dict[str, ProviderTelemetry]:
         """Only health-check the currently active provider (CCH-style on-demand probe)."""
         try:
@@ -465,6 +562,8 @@ class ApplicationController:
             raise ValueError("供应商不存在")
         if profile.kind == "official":
             raise ValueError("OpenAI 官方订阅额度由 Codex 显示")
+        if not self.quota_ready(profile_id):
+            raise SettingsError(f"{profile.display_name} 缺少额度地址或 API Key。")
         return check_provider(
             profile,
             self.credentials.get(profile_id, ""),

@@ -292,6 +292,19 @@ class DeploymentPolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(SettingsError, "API2.*缺少"):
                 controller.switch_profile("relay2")
 
+    def test_glm_and_single_configured_relay_switch_without_other_relay(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            controller = build_controller(Path(name), active_glm=True)
+            controller.settings.profiles["relay2"].base_url = ""
+            controller.settings.profiles["relay2"].model = ""
+            controller.credentials.pop("relay2", None)
+
+            first = controller.switch_profile("relay1")
+            self.assertEqual("relay1", first.profile_id)
+            second = controller.switch_profile("glm")
+            self.assertEqual("glm", second.profile_id)
+            self.assertFalse(controller.profile_ready("relay2"))
+
     def test_relay2_only_is_valid_and_used_as_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             controller = build_controller(Path(name))

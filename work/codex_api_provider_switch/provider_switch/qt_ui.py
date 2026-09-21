@@ -243,6 +243,9 @@ class ProviderCard(GlassPanel):
         active: bool = False,
         unavailable_text: str = "需登录",
     ) -> None:
+        # Availability is already shown by the pill and health line. Keeping
+        # cards tooltip-free avoids empty native popups on Windows themes.
+        self.setToolTip("")
         if not available:
             self.active_pill.set_tone("warning", unavailable_text)
             self.switch_button.setText(unavailable_text)
@@ -251,7 +254,6 @@ class ProviderCard(GlassPanel):
             self.health.setText(
                 "官方账号未登录" if self.profile_id == "openai" else "尚未完成供应商配置"
             )
-            self.setToolTip(self.health.text())
             self.quota_button.setEnabled(False)
         elif not active:
             self.active_pill.set_tone("neutral", "待机")
@@ -1114,14 +1116,7 @@ class ProviderSwitchWindow(QMainWindow):
         self._run_job(
             lambda: (
                 seconds,
-                self.monitor_history.load_codex_request_records(
-                    self.controller.codex_home,
-                    seconds,
-                    current_profile_id=self.controller.detect_active_profile(),
-                    config_mtime=self.controller.config.config_path.stat().st_mtime
-                    if self.controller.config.config_path.exists()
-                    else None,
-                ),
+                self.controller.request_records(seconds),
             ),
             self._render_monitor_page,
             lambda exc: self._set_monitor_scope_error(exc),
@@ -1143,8 +1138,10 @@ class ProviderSwitchWindow(QMainWindow):
             )
         profile_ids = ["openai", "relay1", "relay2", "glm"]
         summaries = self.monitor_history.summarize(records, profile_ids)
-        availabilities = [s.availability for s in summaries.values() if s.availability is not None]
-        overall_avail = sum(availabilities) / len(availabilities) if availabilities else None
+        total_checks = sum(s.total_checks for s in summaries.values())
+        healthy_checks = sum(s.healthy_checks for s in summaries.values())
+        error_checks = sum(s.error_checks for s in summaries.values())
+        overall_avail = healthy_checks / total_checks * 100.0 if total_checks else None
         # CCH-style average: total valid first-token latency divided by the
         # number of requests, rather than averaging provider averages.
         latencies = [
@@ -1153,8 +1150,7 @@ class ProviderSwitchWindow(QMainWindow):
             if item.state == "healthy" and item.latency_ms is not None and item.latency_ms >= 0
         ]
         overall_latency = sum(latencies) / len(latencies) if latencies else None
-        errors = [s.error_rate for s in summaries.values() if s.error_rate is not None]
-        overall_error = sum(errors) / len(errors) if errors else None
+        overall_error = error_checks / total_checks * 100.0 if total_checks else None
         active = sum(1 for s in summaries.values() if s.total_checks > 0)
         self._set_monitor_stat(
             self.monitor_availability_card,
@@ -2142,7 +2138,7 @@ class ProviderSwitchWindow(QMainWindow):
         active = self.controller.detect_active_profile() or "unknown"
         # Health is derived from actual Codex request outcomes in local
         # session logs. Refreshing this page must not send a synthetic probe.
-        return active, {}, self.controller.token_usage()
+        return active, self.controller.request_health(), self.controller.token_usage()
 
     def _handle_monitoring_snapshot(
         self,
@@ -2227,8 +2223,8 @@ class ProviderSwitchWindow(QMainWindow):
         if profile is None or profile.kind == "official":
             QMessageBox.information(self, "额度查询", "OpenAI 官方订阅额度由 Codex 显示。")
             return
-        if not self.controller.profile_ready(profile_id):
-            QMessageBox.information(self, "额度查询", f"请先完成 {profile.display_name} 的 API 地址、模型和 Key 配置。")
+        if not self.controller.quota_ready(profile_id):
+            QMessageBox.information(self, "额度查询", f"请先为 {profile.display_name} 填写额度地址（或 API 地址）和 Key。")
             return
         self._quota_query_in_progress = True
         self._set_busy(True, f"正在查询 {profile.display_name} 额度")
@@ -2316,9 +2312,8 @@ class ProviderSwitchWindow(QMainWindow):
             current_id = self.controller.detect_active_profile()
         except Exception:
             current_id = self.controller.settings.active_profile_id
-        if current_id in {"relay1", "relay2"} and profile_id in {"relay1", "relay2"}:
-            # API1/API2 are equivalent GPT-compatible relays. Isolate the new
-            # route immediately; there is no GLM/OpenAI boundary to preserve.
+        if current_id != "openai" and profile_id != "openai":
+            # Only transitions involving the official route need a coexistence choice.
             self._start_switch(profile_id, True)
             return
 
@@ -2347,8 +2342,8 @@ class ProviderSwitchWindow(QMainWindow):
         self._start_switch(profile_id, disconnect_others)
 
     def _start_switch(self, profile_id: str, disconnect_others: bool) -> None:
-        self._set_busy(True, f"正在切换到 {profile.display_name}")
         profile = self.controller.settings.profiles[profile_id]
+        self._set_busy(True, f"正在切换到 {profile.display_name}")
         self._run_job(
             lambda: self.controller.switch_profile(
                 profile_id,

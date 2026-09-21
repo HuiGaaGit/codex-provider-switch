@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.2.27`
+当前交付版本：`1.3.0`
 
 ## 日常使用
 
@@ -21,7 +21,7 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 - API1 / API2：写入各自的 `base_url`、模型和 `experimental_bearer_token`，名称与 Key 可本地修改；新装默认显示名是 `API1` 和 `API2`。
 - GLM：写入 `responses` 协议、GLM 模型、Key 和当前 Codex Home 下的 `models-glm.json`；切换时会同步未归档会话线程的模型字段，重新打开旧会话也会跟随当前 API 模型。团队项目 ID 使用 `proj_xxxxxxx`，保存时自动纠正粘贴产生的空格分隔。旧版本写入的纯 GLM `models.json` 会自动迁移到独立文件。
 - aqyimin.chat GPT 中转：识别 `aqyimin.chat` / `www.aqyimin.chat`，切回该供应商时恢复原配置中的 GPT 模型、图像能力相关模型目录和推理配置；切换 GLM 时使用独立的 `models-glm.json`，不再污染 API1 原来的 `models.json`。旧版本留下的歧义 `models.json` 备份不会被恢复到 API1。
-- API1 / API2 互相切换时直接断开另一路并写入新配置，不再弹出“保留共存”选择；涉及 GLM 或 OpenAI 直连时仍保留确认提示。
+- API1 / API2 / GLM 之间切换时直接断开旧路由并写入新配置，不再弹出“保留共存”选择；涉及 OpenAI 直连时仍保留确认提示。
 - GLM 切换会清掉旧配置里遗留的 `env_key` 和 `http_headers`（尤其是 `OPENAI_API_KEY`、`x-openai-actor-authorization`），避免认证来源歧义和应用专用请求头破坏 GLM 流式响应；`experimental_bearer_token` 是唯一认证来源。
 - 保留官方登录态与 GLM 不冲突：GLM 始终写入 `requires_openai_auth = false` 并使用自己的 bearer token；官方凭据缓存保持不变，切回 OpenAI 时继续使用。
 - “保持同一 provider 标签”默认开启。第三方供应商切换时复用首次读取到的 provider key（本机当前为 `cch_gz`），避免新会话按多个标签分裂。
@@ -67,7 +67,7 @@ experimental_bearer_token = "<本机保存的 Key>"
 - GLM：优先查询 Coding Plan 配额接口，并以 `/models` 校验实际模型链路；个人套餐留空组织/项目 ID，团队套餐必须同时填写 `org-...` 和 `proj-...`，软件会自动改用团队额度请求。
 - GLM Coding Plan Key 可显示 5 小时和周额度及重置时间。普通按量 Key 可以正常调用模型，但官方接口会返回“不存在 Coding Plan”，此时只显示链路健康，不伪造剩余额度。
 - API2 / Sub2API 网关默认自动请求 `/v1/usage?days=30`；接口只返回钱包余额、没有套餐总量时不显示无意义的剩余金额，界面会明确提示无法计算百分比。其它中转可在供应商页配置专用额度 URL 与 JSON 字段路径。API1 当前网关未开放可用的 Key 级额度接口，软件会明确提示，而不是伪造数值。
-- 供应商卡片的“查额度”只查询已保存 Key 的额度接口，不切换当前供应商，也不发起健康探测；因此未使用中的 GLM 也可以单独查询并保留结果。
+- 供应商卡片的“查额度”只查询已保存 Key 的额度接口，不切换当前供应商，也不发起模型链路探测；API1/API2 会查询配置的 `/v1/usage?days=30`，未使用中的 GLM 也可以单独查询并保留结果。
 - Token 统计扫描当前 Codex Home 的本机会话 JSONL，每个会话只取最后一条累计 token 事件，默认汇总近 30 天 input、output、cache 与总量；界面统一以 M（百万 token）显示。
 - 系统托盘提示当前供应商、链路状态和统计窗口内的 Token 总量；仅在异常发生变化或全部恢复时通知，不会每轮监控重复弹窗。
 - 主窗口右下角只显示操作状态，不再显示 `config.toml` 路径。
@@ -86,10 +86,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.2.27.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.2.27.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.2.27.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.2.27.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.0.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.0.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.0.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.0.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -100,16 +100,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.2.27.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.2.27.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.0.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.0.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.27.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.27.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.2.27.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.0.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.0.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.0.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
@@ -221,6 +221,15 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 - 新增 Threadripper 官方包一键安装与 SHA-256 校验。
 - 新增供应商健康、GLM/自定义额度和本机 Token 统计。
 - API Key 改为 Windows DPAPI 本地加密保存。
+
+## 1.3.0 变更
+
+- API1、API2、GLM 之间切换直接执行，不再弹出共存选择；修复 Qt 切换入口未启动后台任务的问题。
+- Qt 与 Tk 监控统一读取 Codex 实际请求结果，不再因刷新界面主动请求供应商；监控只反馈当前路由。
+- 修复 API1/API2 “仅查询额度”提前返回导致不请求 `/v1/usage` 的问题；GLM 额度成功后仍会独立校验模型链路。
+- 额度-only 查询不再要求先填写默认模型；只要保存了额度地址（或 API 地址）和 Key，即可查询未启用供应商的额度。
+- 可用率与错误率按请求总数加权，兼容旧监控记录中的异常延迟值。
+- 安装器检测到本程序运行时会提供关闭提示；静默安装会自动处理，避免托盘进程导致安装卡住。
 
 ## 1.2.20 变更
 

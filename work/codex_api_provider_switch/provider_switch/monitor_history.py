@@ -75,12 +75,17 @@ class MonitorHistory:
                     ts = float(obj.get("timestamp", 0))
                     if ts < cutoff:
                         continue
+                    latency_raw = obj.get("latency_ms")
+                    try:
+                        latency_ms = int(latency_raw) if latency_raw is not None else None
+                    except (TypeError, ValueError):
+                        latency_ms = None
                     records.append(
                         HealthRecord(
                             timestamp=ts,
                             profile_id=str(obj.get("profile_id", "")),
                             state=str(obj.get("state", "")),
-                            latency_ms=obj.get("latency_ms"),
+                            latency_ms=latency_ms,
                         )
                     )
         except OSError:
@@ -240,6 +245,8 @@ class MonitorHistory:
         bucket_count: int = 80,
     ) -> list[str]:
         """Return a list of state strings for each time bucket ('up','warn','down','none')."""
+        if bucket_count <= 0 or window_seconds <= 0:
+            return []
         now = time.time()
         start = now - window_seconds
         bucket_width = window_seconds / bucket_count

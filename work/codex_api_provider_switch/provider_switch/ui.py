@@ -1312,12 +1312,12 @@ class ProviderSwitchApp(tk.Tk):
             return
         self._monitor_running = True
         self.dashboard_refresh_button.configure(state="disabled", text="刷新中")
-        self.footer_var.set("正在检查供应商链路与额度")
+        self.footer_var.set("正在读取当前供应商请求记录")
 
         def worker() -> None:
             try:
                 active_id = self.controller.detect_active_profile() or "unknown"
-                telemetry = self.controller.telemetry()
+                telemetry = self.controller.request_health()
                 usage = self.controller.token_usage()
                 auth_status = self.controller.auth_status()
                 self.event_queue.put(("monitor_data", (active_id, telemetry, usage, auth_status)))
@@ -1347,17 +1347,24 @@ class ProviderSwitchApp(tk.Tk):
             self.show_page("providers")
             return
         profile = self.controller.settings.profiles[profile_id]
-        detail = "Codex 将自动重启。" if self.controller.settings.auto_restart else "切换后请手动重启 Codex。"
-        choice = messagebox.askyesnocancel(
-            APP_NAME,
-            f"切换到 {profile.display_name}？\n\n{detail}\n\n"
-            "选择“是”会断开其他供应商的 bearer 连接；选择“否”保留共存。\n"
-            "写入前会自动备份 config.toml。",
-            parent=self,
-        )
-        if choice is None:
-            return
-        disconnect_others = bool(choice)
+        try:
+            current_id = self.controller.detect_active_profile()
+        except Exception:
+            current_id = self.controller.settings.active_profile_id
+        if current_id != "openai" and profile_id != "openai":
+            disconnect_others = True
+        else:
+            detail = "Codex 将自动重启。" if self.controller.settings.auto_restart else "切换后请手动重启 Codex。"
+            choice = messagebox.askyesnocancel(
+                APP_NAME,
+                f"切换到 {profile.display_name}？\n\n{detail}\n\n"
+                "选择“是”会断开其他供应商的 bearer 连接；选择“否”保留共存。\n"
+                "写入前会自动备份 config.toml。",
+                parent=self,
+            )
+            if choice is None:
+                return
+            disconnect_others = bool(choice)
         self._set_busy(True, f"正在切换到 {profile.display_name}")
 
         def worker() -> None:

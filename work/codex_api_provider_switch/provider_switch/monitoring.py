@@ -248,14 +248,15 @@ def check_provider(
                 ):
                     quota_message = "这是团队套餐 Key：请在供应商配置填写组织 ID 和项目 ID"
                 if quota:
-                    health = HealthResult(
-                        profile.profile_id,
-                        "healthy" if probe_health else "unknown",
-                        "GLM 链路与凭据正常" if probe_health else "额度已更新（未检查链路）",
-                        quota_latency,
-                        _now_label(),
-                    )
-                    return ProviderTelemetry(profile.profile_id, health, quota, quota_message)
+                    if not probe_health:
+                        health = HealthResult(
+                            profile.profile_id,
+                            "unknown",
+                            "额度已更新（未检查链路）",
+                            quota_latency,
+                            _now_label(),
+                        )
+                        return ProviderTelemetry(profile.profile_id, health, quota, quota_message)
                 if (
                     isinstance(payload, dict)
                     and payload.get("success") is False
@@ -263,16 +264,28 @@ def check_provider(
                 ):
                     quota_message = str(payload.get("msg") or "额度业务查询失败")
             elif status in {401, 403}:
-                health = HealthResult(
-                    profile.profile_id, "auth_error", "GLM Key 无效或无权限", quota_latency, _now_label()
-                )
-                return ProviderTelemetry(profile.profile_id, health, quota_message="额度认证失败")
+                quota_message = "额度认证失败"
             else:
                 quota_message = f"额度接口 HTTP {status}"
         except MonitoringError as exc:
             quota_message = f"额度查询失败：{exc}"
 
     if not probe_health:
+        if profile.kind != "glm":
+            try:
+                quota_status, payload, _ = _http_json(_relay_quota_url(profile), api_key)
+                if quota_status == 200:
+                    quota, quota_message = _parse_generic_quota(profile, payload)
+                elif quota_status in {401, 403}:
+                    quota_message = "额度接口认证失败"
+                elif quota_status == 503 and isinstance(payload, dict):
+                    error = payload.get("error", {})
+                    detail = error.get("message", "") if isinstance(error, dict) else ""
+                    quota_message = "中转未返回额度：上游暂无可用通道" if detail else "额度接口 HTTP 503"
+                else:
+                    quota_message = f"额度接口 HTTP {quota_status}"
+            except MonitoringError as exc:
+                quota_message = f"额度查询失败：{exc}"
         health = HealthResult(
             profile.profile_id,
             "unknown",
