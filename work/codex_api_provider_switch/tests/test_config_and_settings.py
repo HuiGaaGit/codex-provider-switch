@@ -282,6 +282,47 @@ class ConfigManagerTests(unittest.TestCase):
             restored["model_providers"]["custom"]["http_headers"]["x-openai-actor-authorization"],
         )
 
+    def test_api1_url_change_with_stale_ap1_fields_uses_generic_relay_policy(self) -> None:
+        # A manual config edit can change the endpoint before the next switch,
+        # leaving the old AP1 marker behind.  API1 must then match API2 rather
+        # than reusing the aqyimin-only image contract.
+        (self.home / "config.toml").write_text(
+            'model_provider = "custom"\n'
+            'model = "gpt-5.6-sol"\n'
+            'service_tier = "priority"\n\n'
+            '[features]\n'
+            'image_generation = true\n'
+            'steer = true\n\n'
+            '[model_providers.custom]\n'
+            'name = "API1"\n'
+            'base_url = "https://new-relay.example/v1"\n'
+            'wire_api = "responses"\n'
+            'requires_openai_auth = true\n'
+            'http_headers = { x-openai-actor-authorization = "local-image-extension", x-tenant = "keep-me" }\n'
+            'experimental_bearer_token = "old"\n',
+            encoding="utf-8",
+        )
+        profile = ProviderProfile(
+            "relay1",
+            "API1",
+            "relay",
+            "relay_1",
+            "https://new-relay.example/v1",
+            "gpt-5.6-sol",
+            requires_openai_auth=True,
+        )
+
+        self.manager.apply_profile(profile, "new-key", True, "custom")
+
+        parsed = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        provider = parsed["model_providers"]["custom"]
+        self.assertTrue(provider["requires_openai_auth"])
+        self.assertEqual("new-key", provider["experimental_bearer_token"])
+        self.assertNotIn("image_generation", parsed.get("features", {}))
+        self.assertNotIn("service_tier", parsed)
+        self.assertNotIn("x-openai-actor-authorization", provider.get("http_headers", {}))
+        self.assertEqual("keep-me", provider["http_headers"]["x-tenant"])
+
     def test_aqyimin_compatibility_round_trip_through_official_route(self) -> None:
         (self.home / "config.toml").write_text(
             'model_provider = "custom"\n'

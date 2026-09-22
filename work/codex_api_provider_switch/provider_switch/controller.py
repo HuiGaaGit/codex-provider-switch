@@ -208,7 +208,7 @@ class ApplicationController:
             # aqyimin.chat explicitly uses API-key-only auth. Retaining the
             # official OpenAI session must not rewrite that provider contract.
             profile.requires_openai_auth = (
-                False if ConfigManager.is_aqyimin_url(profile.base_url.strip()) else retain
+                False if ConfigManager.uses_aqyimin_compatibility(profile) else retain
             )
 
     def deploy_profile(
@@ -345,7 +345,7 @@ class ApplicationController:
         if profile_id in {"relay1", "relay2"}:
             profile.requires_openai_auth = (
                 False
-                if ConfigManager.is_aqyimin_url(profile.base_url.strip())
+                if ConfigManager.uses_aqyimin_compatibility(profile)
                 else self.settings.retain_official_auth
             )
         api_key = self.credentials.get(profile_id, "")

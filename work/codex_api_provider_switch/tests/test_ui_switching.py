@@ -56,6 +56,12 @@ class QtSwitchEntryTests(unittest.TestCase):
                     self.window._start_switch.assert_called_once_with(target_id, True)
             message_box.assert_not_called()
 
+    def test_monitor_page_has_no_availability_timeline(self) -> None:
+        """The monitoring page keeps request summaries without the old bar chart."""
+        self.assertFalse(hasattr(self.window, "_timeline_widget"))
+        self.assertFalse(hasattr(self.window, "_timeline_labels"))
+        self.assertNotIn("时间线", self.window._monitor_scope_hint.text())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -386,6 +386,16 @@ class ConfigManager:
         return cls._is_aqyimin_url(value)
 
     @classmethod
+    def uses_aqyimin_compatibility(cls, profile: ProviderProfile) -> bool:
+        """Return whether a relay endpoint gets aqyimin-only behavior.
+
+        The compatibility contract belongs to the endpoint hostname, not to
+        the API1 slot. Editing API1 to any other URL must therefore make it
+        behave like the generic API2 relay.
+        """
+        return profile.kind == "relay" and cls._is_aqyimin_url(profile.base_url)
+
+    @classmethod
     def _text_uses_aqyimin(cls, text: str) -> bool:
         try:
             parsed = tomllib.loads(text)
@@ -395,6 +405,27 @@ class ConfigManager:
             return isinstance(provider, dict) and cls._is_aqyimin_url(provider.get("base_url"))
         except (TypeError, tomllib.TOMLDecodeError):
             return False
+
+    @classmethod
+    def _text_has_aqyimin_image_marker(cls, text: str) -> bool:
+        """Detect a stale AP1 image marker after a manual URL edit."""
+        try:
+            parsed = tomllib.loads(text)
+            provider_key = str(parsed.get("model_provider", ""))
+            providers = parsed.get("model_providers", {})
+            provider = providers.get(provider_key, {}) if isinstance(providers, dict) else {}
+            headers = provider.get("http_headers", {}) if isinstance(provider, dict) else {}
+            if not isinstance(headers, dict):
+                return False
+            for key, value in headers.items():
+                if (
+                    _normalize_header_name(str(key)) in AQYIMIN_IMAGE_HEADERS
+                    and value in AQYIMIN_SAFE_IMAGE_HEADER_VALUES
+                ):
+                    return True
+        except (TypeError, tomllib.TOMLDecodeError):
+            pass
+        return False
 
     def _capture_aqyimin_image_config(self, text: str) -> None:
         """Remember non-secret aqyimin compatibility settings before GLM."""
@@ -664,8 +695,10 @@ class ConfigManager:
     ) -> tuple[str, str]:
         original, _ = self.read()
         original_aqyimin = self._text_uses_aqyimin(original)
-        target_aqyimin = (
-            profile.kind != "official" and self._is_aqyimin_url(profile.base_url)
+        original_aqyimin_marker = self._text_has_aqyimin_image_marker(original)
+        target_aqyimin = self.uses_aqyimin_compatibility(profile)
+        leaving_aqyimin = not target_aqyimin and (
+            original_aqyimin or original_aqyimin_marker
         )
         if original_aqyimin and not target_aqyimin:
             self._capture_aqyimin_image_config(original)
@@ -674,7 +707,7 @@ class ConfigManager:
             if profile.model:
                 updated = _set_top_level(updated, "model", profile.model)
             updated = _set_top_level(updated, "model_catalog_json", None)
-            if original_aqyimin:
+            if leaving_aqyimin:
                 updated = _set_top_level(updated, "service_tier", None)
                 updated = _set_table_key(updated, "features", "image_generation", None)
             for key in clear_other_keys or []:
@@ -696,15 +729,15 @@ class ConfigManager:
             updated = _set_top_level(
                 updated, "model_catalog_json", catalog_path.resolve(strict=False).as_posix()
             )
-        elif self._is_aqyimin_url(profile.base_url):
+        elif target_aqyimin:
             updated = self._restore_aqyimin_image_config(updated)
         else:
             updated = _set_top_level(updated, "model_catalog_json", None)
-        if not target_aqyimin and (original_aqyimin or profile.kind == "glm"):
+        if not target_aqyimin and (leaving_aqyimin or profile.kind == "glm"):
             # The image flag belongs to aqyimin's extension, not to GLM or a
             # generic relay. Keep unrelated feature flags untouched.
             updated = _set_table_key(updated, "features", "image_generation", None)
-        if original_aqyimin and not target_aqyimin:
+        if leaving_aqyimin:
             updated = _set_top_level(updated, "service_tier", None)
         provider_values = {
             "name": profile.display_name,

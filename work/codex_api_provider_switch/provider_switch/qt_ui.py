@@ -471,63 +471,6 @@ QToolTip {
 """
 
 
-class MonitorTimelineWidget(QWidget):
-    """Draws per-provider uptime bars similar to CCH availability monitoring."""
-
-    COLORS = {
-        "up": QColor("#17845b"),
-        "warn": QColor("#bd6b18"),
-        "down": QColor("#c63f4d"),
-        "none": QColor(255, 255, 255, 20),
-    }
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._providers: dict[str, tuple[str, list[str]]] = {}
-        # Four rows need 8px top margin + 4×24px rows + 3×10px gaps,
-        # plus a little bottom breathing room.  The previous 120px minimum
-        # let the layout squeeze the last provider row out of the viewport.
-        self.setMinimumHeight(154)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-
-    def set_provider(self, profile_id: str, label: str, buckets: list[str]) -> None:
-        self._providers[profile_id] = (label, buckets)
-
-    def set_ranges(self, seconds: float) -> None:
-        pass
-
-    def paintEvent(self, event: Any) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        row_height = 24
-        bar_height = 14
-        gap = 10
-        x_start = 90
-        margin = 8
-        y = margin
-        width = max(80, self.width() - x_start - margin)
-        painter.setFont(QFont("Segoe UI", 9))
-        for pid, (label, buckets) in self._providers.items():
-            painter.setPen(QColor("#c8d0d4"))
-            painter.drawText(QRectF(0, y + 2, x_start - 8, row_height), Qt.AlignRight | Qt.AlignVCenter, label)
-            if not buckets:
-                buckets = ["none"] * 40
-            count = len(buckets)
-            seg_width = max(2, width / count) if count > 0 else width
-            for i, state in enumerate(buckets):
-                color = self.COLORS.get(state, self.COLORS["none"])
-                painter.setBrush(color)
-                painter.setPen(Qt.PenStyle.NoPen)
-                x = x_start + i * seg_width
-                painter.drawRoundedRect(QRectF(x, y + 4, seg_width - 1, bar_height), 3, 3)
-            y += row_height + gap
-        painter.end()
-
-    def sizeHint(self) -> Any:
-        from PySide6.QtCore import QSize
-        return QSize(600, max(154, len(self._providers) * 34 + 20))
-
-
 class TokenGaugeWidget(QWidget):
     """Semicircular gauge showing token usage relative to peers."""
 
@@ -1017,7 +960,7 @@ class ProviderSwitchWindow(QMainWindow):
         page, layout = self._page(
             "monitoring",
             "监控面板",
-            "按需查看当前供应商可用性、延迟和 Token 使用量趋势",
+            "按需查看当前供应商请求健康、响应时间和 Token 使用量",
         )
         # Summary cards row
         cards_row = QHBoxLayout()
@@ -1062,21 +1005,11 @@ class ProviderSwitchWindow(QMainWindow):
         range_row.addStretch(1)
         layout.addLayout(range_row)
 
-        # Timeline panel
-        timeline_panel = GlassPanel(strong=True)
-        timeline_panel.setMinimumHeight(216)
-        timeline_layout = QVBoxLayout(timeline_panel)
-        timeline_layout.setContentsMargins(16, 14, 16, 14)
-        timeline_layout.addWidget(self._section_title("供应商可用性时间线"))
-        scope_hint = QLabel("每次只记录当时实际使用的供应商；未切换或未刷新时不会产生其他供应商记录。")
+        scope_hint = QLabel("仅统计 Codex 实际请求记录；刷新不会主动发送探测请求。")
         scope_hint.setProperty("class", "muted")
         scope_hint.setWordWrap(True)
         self._monitor_scope_hint = scope_hint
-        timeline_layout.addWidget(scope_hint)
-        self._timeline_labels: list[str] = []
-        self._timeline_widget = MonitorTimelineWidget()
-        timeline_layout.addWidget(self._timeline_widget, 1)
-        layout.addWidget(timeline_panel, 1)
+        layout.addWidget(scope_hint)
 
         # Token usage gauges
         token_panel = GlassPanel()
@@ -1194,30 +1127,8 @@ class ProviderSwitchWindow(QMainWindow):
         )
         self._set_monitor_stat(self.monitor_providers_card, f"{active}/{len(profile_ids)}")
 
-        # Timeline
-        self._timeline_widget.set_ranges(seconds)
-        for pid in profile_ids:
-            buckets = self.monitor_history.timeline_buckets(records, pid, seconds)
-            profile = self.controller.settings.profiles.get(pid)
-            label = profile.display_name if profile else pid
-            self._timeline_widget.set_provider(pid, label, buckets)
-        self._timeline_widget.repaint()
-
-    def _record_monitor_history(self, telemetry: dict[str, ProviderTelemetry]) -> None:
-        import time as _time
-        now = _time.time()
-        records = []
-        for pid, item in telemetry.items():
-            records.append(
-                HealthRecord(
-                    timestamp=now,
-                    profile_id=pid,
-                    state=item.health.state,
-                    latency_ms=item.health.latency_ms,
-                )
-            )
-        self.monitor_history.append(records)
-        self._refresh_monitor_page()
+        # The former per-provider availability bars were intentionally removed;
+        # the summary cards and request log remain the source of truth.
 
     def _update_monitor_tokens(self, usage: dict[str, TokenUsage]) -> None:
         self._latest_full_usage = usage
@@ -1317,7 +1228,8 @@ class ProviderSwitchWindow(QMainWindow):
             "中转默认自动探测 Sub2API /v1/usage 额度；也可填专用额度接口。"
             "GLM 团队套餐需同时填写组织 ID 和项目 ID；项目 ID 使用下划线格式 proj_xxxxxxx。"
             "官方账号登录态只用于 OpenAI 直连；API1、API2、GLM 的 API Key 独立管理。"
-            "AP1 的 Codex 图像扩展与 GPT Image 2 本地生成命令分开；后者需要独立的 OPENAI_API_KEY。"
+            "仅当 API 地址属于 aqyimin.chat 时启用 AP1 图像扩展；更换为其他 URL 后按 API2 的通用中转配置处理。"
+            "GPT Image 2 本地生成命令仍需独立的 OPENAI_API_KEY。"
         )
         note.setProperty("class", "muted")
         note.setWordWrap(True)

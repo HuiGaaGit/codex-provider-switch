@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.3.3`
+当前交付版本：`1.3.4`
 
 ## 日常使用
 
@@ -20,7 +20,7 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 - OpenAI 直连：取消自定义 `model_provider` 默认值，继续使用 Codex 当前 OpenAI/ChatGPT 登录；只有检测到保留的官方登录态时按钮才可用。
 - API1 / API2：写入各自的 `base_url`、模型和 `experimental_bearer_token`，名称与 Key 可本地修改；新装默认显示名是 `API1` 和 `API2`。
 - GLM：写入 `responses` 协议、GLM 模型、Key 和当前 Codex Home 下的 `models-glm.json`；切换时会同步未归档会话线程的模型字段，重新打开旧会话也会跟随当前 API 模型。团队项目 ID 使用 `proj_xxxxxxx`，保存时自动纠正粘贴产生的空格分隔。旧版本写入的纯 GLM `models.json` 会自动迁移到独立文件。
-- aqyimin.chat GPT 中转：识别 `aqyimin.chat` / `www.aqyimin.chat`，切回该供应商时恢复原配置中的 GPT 模型、图像能力相关模型目录和推理配置；切换 GLM 时使用独立的 `models-glm.json`，不再污染 API1 原来的 `models.json`。旧版本留下的歧义 `models.json` 备份不会被恢复到 API1。
+- aqyimin.chat GPT 中转：只有 API1 地址的主机属于 `aqyimin.chat`（含 `www` 和子域名）时，切回该供应商才恢复原配置中的 GPT 模型、图像能力相关模型目录和推理配置；切换 GLM 时使用独立的 `models-glm.json`，不再污染 API1 原来的 `models.json`。旧版本留下的歧义 `models.json` 备份不会被恢复到 API1。API1 改成其他供应商 URL 后，完全按 API2 的通用中转策略处理，并清理残留的 AP1 专用字段。
 - AP1 认证兼容：aqyimin.chat 始终使用自己的 bearer/API Key，启动时会把旧配置误写的 `requires_openai_auth = true` 修正为 `false`，并只在缺失时补齐 `features.image_generation` 与 `local-image-extension` 头；明确的人工禁用或自定义值会保留。
 - 图像调用边界：AP1 的 Codex 图像扩展/图片输入与 GPT Image 2 本地生成命令是两条链路。后者由 OpenAI Platform API 凭据驱动，按官方文档读取独立的 `OPENAI_API_KEY`；切换器不会把 AP1/GLM Key 复制到该环境变量。
 - API1 / API2 / GLM 之间切换时直接断开旧路由并写入新配置，不再弹出“保留共存”选择；涉及 OpenAI 直连时仍保留确认提示。
@@ -73,6 +73,7 @@ experimental_bearer_token = "<本机保存的 Key>"
 - Token 统计扫描当前 Codex Home 的本机会话 JSONL，每个会话只取最后一条累计 token 事件，默认汇总近 30 天 input、output、cache 与总量；界面统一以 M（百万 token）显示。
 - 系统托盘提示当前供应商、链路状态和统计窗口内的 Token 总量；仅在异常发生变化或全部恢复时通知，不会每轮监控重复弹窗。
 - 主窗口右下角只显示操作状态，不再显示 `config.toml` 路径。
+- 监控页不再显示供应商可用性时间线或监控条区域，只保留基于实际请求记录的健康摘要、平均首响应时间、错误率和 Token 仪表盘。
 
 ## 本地数据与安全
 
@@ -88,10 +89,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.3.3.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.3.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.3.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.3.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.4.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.4.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.4.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.4.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -102,29 +103,29 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.3.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.3.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.4.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.4.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.3.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.3.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.3.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.4.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.4.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.4.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
 ## 1.2.16 变更
 
 - Token 统计改为按每条 `token_count` 事件的累计增量计算，并按事件时间归属供应商，避免跨供应商会话和重复累计造成偏差。
-- 可用性监控改为读取 Codex 实际请求结果事件；刷新只读取本地会话日志，不主动向供应商发送探测请求。`n- 监控面板显示最近 3 次请求的首次响应时间，并使用 Codex 的 `time_to_first_token_ms` 计算平均响应；总览供应商卡片不再显示延迟毫秒。
+- 可用性监控改为读取 Codex 实际请求结果事件；刷新只读取本地会话日志，不主动向供应商发送探测请求。监控面板使用 Codex 的 `time_to_first_token_ms` 计算平均响应；总览供应商卡片不再显示延迟毫秒。
 
 - 统一官方登录态文案：auth 仅用于 OpenAI 直连，API1、API2、GLM 使用各自独立 API Key。
 - 修复未分类凭据或 API Key 登录误解锁 OpenAI 直连的问题。
 - 当前供应商健康检查、额度和旧遥测状态按实际 `config.toml` 路由刷新，避免显示过期供应商数据。
 - 总览、监控、部署与设置页支持小窗口滚动，供应商卡片和右下角缩放控件不再裁切。
-- 修复监控面板可用性时间线最后一行 GLM 被面板高度裁切的问题。
+- 修复旧版监控面板可用性时间线最后一行 GLM 被面板高度裁切的问题；1.3.4 起该时间线已移除。
 - 压缩总览卡片和底部摘要模块，默认窗口无需上下滚动即可查看完整内容。
 - 无边框窗口支持从边缘和四个角自由调整宽度与高度。
 
@@ -236,6 +237,13 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 - 缺少历史 AP1 快照时只补齐缺失的图像扩展标记；切换 GLM/API2/OpenAI 仍会隔离 AP1 专用字段。
 - 明确 GPT Image 2 本地命令需要独立 OpenAI Platform `OPENAI_API_KEY`，不会误用供应商 Key。
 - 1.3.3 产物 SHA-256：便携版 `E08DCCAB83F6ACFDD545A94BD51FA8A18805AC66F09263856A3F19B65DFB632C`；安装包 `19146F465EB01E6286C0D873FBA96F1428E3DD8CD69B629FB7A2C06895083325`。
+
+## 1.3.4 变更
+
+- API1 的 AP1 图像扩展兼容策略改为按 URL 主机识别，仅对 `aqyimin.chat` 生效；API1 改成其他 URL 后与 API2 使用同一套通用中转策略，并自动清理残留的 AP1 图像字段、服务级别和专用请求头，同时保留普通自定义请求头。
+- 监控页移除供应商可用性时间线/条形区域，避免无实际请求时产生误导；保留请求健康摘要、按有效请求加权的平均首响应时间、错误率和 Token 使用量仪表盘。
+- 新增 API1 URL 迁移回归测试，验证 AP1 残留配置不会泄漏到普通中转。
+- 1.3.4 产物 SHA-256：便携版 `C27678B87C5BFEB1E855C38246E74D8A84323A832A0992A4D67259D94F1C3B9F`；安装包 `8D574E678B99482DC44E0D45C1015B302ED19C81FC2ECE43416536782E2D3112`。
 
 ## 1.3.0 变更
 
