@@ -1317,6 +1317,7 @@ class ProviderSwitchWindow(QMainWindow):
             "中转默认自动探测 Sub2API /v1/usage 额度；也可填专用额度接口。"
             "GLM 团队套餐需同时填写组织 ID 和项目 ID；项目 ID 使用下划线格式 proj_xxxxxxx。"
             "官方账号登录态只用于 OpenAI 直连；API1、API2、GLM 的 API Key 独立管理。"
+            "AP1 的 Codex 图像扩展与 GPT Image 2 本地生成命令分开；后者需要独立的 OPENAI_API_KEY。"
         )
         note.setProperty("class", "muted")
         note.setWordWrap(True)
@@ -1774,17 +1775,24 @@ class ProviderSwitchWindow(QMainWindow):
             self.policy_detail.setText(
                 "保留官方登录态；API1、API2、GLM 均使用各自的 API Key，切回 OpenAI 直连时无需重新登录。"
                 "配置路由仍一次只启用一个供应商，保留 auth.json 不等于与 GLM 同时连接。"
+                "AP1 的图像扩展不提供 GPT Image 2 本地命令的 OPENAI_API_KEY。"
             )
         else:
             self.policy_detail.setText(
                 "独立 API Key 模式：API1、API2、GLM 不受影响；OpenAI 直连按钮保持禁用，直到重新登录。"
+                "AP1 图像扩展与本地 GPT Image 2 凭据相互独立。"
             )
 
     def _apply_auth_policy(self, state: int) -> None:
         retain = bool(state)
         self.controller.settings.retain_official_auth = retain
         for profile_id in ("relay1", "relay2"):
-            self.controller.settings.profiles[profile_id].requires_openai_auth = retain
+            profile = self.controller.settings.profiles[profile_id]
+            profile.requires_openai_auth = (
+                False
+                if self.controller.config.is_aqyimin_url(profile.base_url.strip())
+                else retain
+            )
         try:
             self.controller.save()
             self._update_policy_text()
@@ -2805,7 +2813,12 @@ class SetupWizard(QDialog):
             if value:
                 self.controller.credentials[profile_id] = value
         for profile_id in ("relay1", "relay2"):
-            settings.profiles[profile_id].requires_openai_auth = settings.retain_official_auth
+            profile = settings.profiles[profile_id]
+            profile.requires_openai_auth = (
+                False
+                if self.controller.config.is_aqyimin_url(profile.base_url.strip())
+                else settings.retain_official_auth
+            )
         self.controller.save()
         if glm_key and not self.controller.catalog.target_path.exists():
             self.controller.catalog.inject_bundled()

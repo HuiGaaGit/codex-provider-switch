@@ -9,7 +9,7 @@ from typing import Any, Callable
 from .auth_manager import AuthStatus, CodexAuthError, CodexAuthManager
 from .catalog import ModelCatalogManager
 from .codex_process import CodexProcessController
-from .config_manager import ConfigManager, discover_codex_homes
+from .config_manager import ConfigError, ConfigManager, discover_codex_homes
 from .constants import SWITCH_LOG_NAME
 from .models import AppSettings, ConfigSnapshot, HealthResult, ProviderTelemetry, TokenUsage
 from .monitoring import check_provider, scan_token_usage, scan_token_usage_seconds
@@ -54,6 +54,16 @@ class ApplicationController:
     def _bind_home(self) -> None:
         home = Path(self.settings.codex_home).expanduser()
         self.config = ConfigManager(home)
+        if self.config.config_path.exists():
+            # Older bootstrap versions copied AP1's provider auth flag into
+            # the global official-login policy. Repair that one-way migration
+            # before Codex reads the config, while keeping a normal backup.
+            try:
+                self.config.normalize_active_provider_auth()
+            except (ConfigError, OSError):
+                # A malformed or locked config is reported by the normal
+                # preview/switch path; startup must remain usable for repair.
+                pass
         self.catalog = ModelCatalogManager(home)
         self.auth = CodexAuthManager(home)
 
@@ -138,7 +148,11 @@ class ApplicationController:
         if model:
             profile.model = model[:120]
         profile.wire_api = str(provider.get("wire_api", profile.wire_api) or "responses")
-        profile.requires_openai_auth = bool(provider.get("requires_openai_auth", False))
+        profile.requires_openai_auth = (
+            False
+            if ConfigManager.is_aqyimin_url(base_url)
+            else bool(provider.get("requires_openai_auth", False))
+        )
         token = provider.get("experimental_bearer_token", "")
         if isinstance(token, str) and token.strip():
             self.credentials[active] = token.strip()
@@ -190,7 +204,12 @@ class ApplicationController:
     def _set_auth_retention(self, retain: bool) -> None:
         self.settings.retain_official_auth = retain
         for profile_id in ("relay1", "relay2"):
-            self.settings.profiles[profile_id].requires_openai_auth = retain
+            profile = self.settings.profiles[profile_id]
+            # aqyimin.chat explicitly uses API-key-only auth. Retaining the
+            # official OpenAI session must not rewrite that provider contract.
+            profile.requires_openai_auth = (
+                False if ConfigManager.is_aqyimin_url(profile.base_url.strip()) else retain
+            )
 
     def deploy_profile(
         self,
@@ -324,7 +343,11 @@ class ApplicationController:
         if profile_id != "openai" and not self.profile_ready(profile_id):
             raise SettingsError(f"{profile.display_name} 缺少 API 地址、模型或 Key。")
         if profile_id in {"relay1", "relay2"}:
-            profile.requires_openai_auth = self.settings.retain_official_auth
+            profile.requires_openai_auth = (
+                False
+                if ConfigManager.is_aqyimin_url(profile.base_url.strip())
+                else self.settings.retain_official_auth
+            )
         api_key = self.credentials.get(profile_id, "")
         catalog_path: Path | None = None
         if profile.kind == "glm":

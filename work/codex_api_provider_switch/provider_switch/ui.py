@@ -1012,9 +1012,9 @@ class ProviderSwitchApp(tk.Tk):
         self.auth_status_var.set(status.label)
         self.auth_policy_var.set(
             "策略：保留官方登录态供 OpenAI 直连；API1、API2、GLM 使用各自 API Key"
-            "；配置路由一次只启用一个供应商"
+            "；配置路由一次只启用一个供应商；AP1 图像扩展与 GPT Image 2 本地命令分开"
             if retained
-            else "策略：不保留官方登录态；API1、API2、GLM 不受影响，OpenAI 直连已停用"
+            else "策略：不保留官方登录态；API1、API2、GLM 不受影响，OpenAI 直连已停用；AP1 图像扩展与本地 GPT Image 2 凭据独立"
         )
         file_state = "存在" if status.auth_file_exists else "未发现（凭据也可能位于系统凭据库）"
         self.auth_path_var.set(f"auth.json：{file_state} · {status.auth_path}")

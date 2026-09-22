@@ -22,6 +22,12 @@ class ConfigError(RuntimeError):
 TOP_LEVEL_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+\s*=")
 TABLE_RE = re.compile(r"^\s*\[([^]]+)]\s*(?:#.*)?$")
 
+# aqyimin.chat uses this non-secret header to opt into its image extension.
+# Keep the allow-list narrow so a provider's bearer/API credentials can never
+# be copied into the compatibility snapshot.
+AQYIMIN_IMAGE_HEADERS = {"x-openai-actor-authorization"}
+AQYIMIN_SAFE_IMAGE_HEADER_VALUES = {"local-image-extension"}
+
 
 def discover_codex_homes() -> list[Path]:
     candidates: list[Path] = []
@@ -100,6 +106,43 @@ def _set_top_level(text: str, key: str, value: str | bool | None) -> str:
         if boundary and lines[boundary - 1].strip():
             insertion += ending
         lines.insert(boundary, insertion)
+    return "".join(lines)
+
+
+def _set_table_key(text: str, table_name: str, key: str, value: str | bool | None) -> str:
+    """Set or comment a scalar key inside an existing TOML table."""
+    lines = text.splitlines(keepends=True)
+    bounds = _table_bounds(lines, table_name)
+    if bounds is None:
+        if value is not None:
+            ending = "\r\n" if "\r\n" in text else "\n"
+            if lines and lines[-1].strip():
+                lines.append(ending)
+            lines.append(f"[{table_name}]{ending}")
+            lines.append(f"{key} = {_toml_value(value)}{ending}")
+            return "".join(lines)
+        return text
+    start, end = bounds
+    matcher = re.compile(rf"^(?P<indent>\s*)(?P<comment>#\s*)?{re.escape(key)}\s*=")
+    matches = [index for index in range(start + 1, end) if matcher.match(lines[index])]
+    active = [index for index in matches if not lines[index].lstrip().startswith("#")]
+    if value is None:
+        for index in active:
+            indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+            lines[index] = f"{indent}# {lines[index][len(indent):]}"
+        return "".join(lines)
+    rendered = f"{key} = {_toml_value(value)}"
+    if active:
+        index = active[0]
+        lines[index] = rendered + (_line_ending(lines[index]) or "\n")
+        for duplicate in active[1:]:
+            lines[duplicate] = f"# {lines[duplicate]}"
+    elif matches:
+        index = matches[0]
+        lines[index] = rendered + (_line_ending(lines[index]) or "\n")
+    else:
+        ending = "\r\n" if "\r\n" in text else "\n"
+        lines.insert(end, rendered + ending)
     return "".join(lines)
 
 
@@ -193,6 +236,81 @@ def _split_inline_items(body: str) -> list[str]:
     return items
 
 
+def _normalize_header_name(value: str) -> str:
+    return value.strip().strip('"').strip("'").casefold().replace("_", "-")
+
+
+def _merge_provider_headers(
+    text: str,
+    provider_key: str,
+    updates: dict[str, str | None],
+) -> str:
+    """Merge selected headers in a provider's inline http_headers table.
+
+    Codex emits this table as a one-line TOML inline table. Unknown headers are
+    preserved verbatim; an update value of ``None`` removes only that header.
+    """
+    if not updates:
+        return text
+    normalized_updates = {
+        _normalize_header_name(key): (key, value) for key, value in updates.items()
+    }
+    lines = text.splitlines(keepends=True)
+    bounds = _table_bounds(lines, f"model_providers.{provider_key}")
+    if bounds is None:
+        return text
+    start, end = bounds
+    matcher = re.compile(
+        r"^(?P<indent>\s*)http_headers\s*=\s*\{(?P<body>.*)\}(?P<ending>\r?\n)?\s*$"
+    )
+    header_index: int | None = None
+    for index in range(start + 1, end):
+        if matcher.match(lines[index]):
+            header_index = index
+            break
+
+    existing: list[str] = []
+    seen: set[str] = set()
+    if header_index is not None:
+        match = matcher.match(lines[header_index])
+        assert match is not None
+        for item in _split_inline_items(match.group("body")):
+            if "=" not in item:
+                continue
+            raw_key = item.split("=", 1)[0].strip()
+            normalized = _normalize_header_name(raw_key)
+            if normalized in normalized_updates:
+                _, value = normalized_updates[normalized]
+                if value is None:
+                    continue
+                existing.append(f"{raw_key} = {_toml_value(value)}")
+                seen.add(normalized)
+            else:
+                existing.append(item)
+
+    for normalized, (key, value) in normalized_updates.items():
+        if value is None or normalized in seen:
+            continue
+        existing.append(f"{key} = {_toml_value(value)}")
+
+    if existing:
+        ending = "\n"
+        indent = ""
+        if header_index is not None:
+            match = matcher.match(lines[header_index])
+            assert match is not None
+            ending = match.group("ending") or ("\r\n" if "\r\n" in text else "\n")
+            indent = match.group("indent")
+        rendered = f"{indent}http_headers = {{ {', '.join(existing)} }}{ending}"
+        if header_index is None:
+            lines.insert(end, rendered)
+        else:
+            lines[header_index] = rendered
+    elif header_index is not None:
+        del lines[header_index]
+    return "".join(lines)
+
+
 def _is_auth_header_key(key: str) -> bool:
     normalized = key.strip().strip('"').strip("'").casefold().replace("_", "-")
     return (
@@ -262,24 +380,67 @@ class ConfigManager:
             return False
         return host == "aqyimin.chat" or host.endswith(".aqyimin.chat")
 
-    def _capture_aqyimin_image_config(self, text: str) -> None:
-        """Remember image-capable top-level settings before switching to GLM."""
+    @classmethod
+    def is_aqyimin_url(cls, value: Any) -> bool:
+        """Public provider classifier shared by policy and rendering layers."""
+        return cls._is_aqyimin_url(value)
+
+    @classmethod
+    def _text_uses_aqyimin(cls, text: str) -> bool:
         try:
             parsed = tomllib.loads(text)
             provider_key = str(parsed.get("model_provider", ""))
-            provider = parsed.get("model_providers", {}).get(provider_key, {})
+            providers = parsed.get("model_providers", {})
+            provider = providers.get(provider_key, {}) if isinstance(providers, dict) else {}
+            return isinstance(provider, dict) and cls._is_aqyimin_url(provider.get("base_url"))
+        except (TypeError, tomllib.TOMLDecodeError):
+            return False
+
+    def _capture_aqyimin_image_config(self, text: str) -> None:
+        """Remember non-secret aqyimin compatibility settings before GLM."""
+        try:
+            parsed = tomllib.loads(text)
+            provider_key = str(parsed.get("model_provider", ""))
+            providers = parsed.get("model_providers", {})
+            provider = providers.get(provider_key, {}) if isinstance(providers, dict) else {}
             if not isinstance(provider, dict) or not self._is_aqyimin_url(provider.get("base_url")):
                 return
-            values = {
-                key: parsed.get(key)
-                for key in ("model", "model_catalog_json", "model_reasoning_effort")
-            }
+
+            values: dict[str, str | bool | int | float] = {}
+            for key in ("model", "model_catalog_json", "model_reasoning_effort", "service_tier"):
+                value = parsed.get(key)
+                if isinstance(value, (str, bool, int, float)):
+                    values[key] = value
+
+            features: dict[str, bool] = {}
+            feature_table = parsed.get("features", {})
+            if isinstance(feature_table, dict) and isinstance(
+                feature_table.get("image_generation"), bool
+            ):
+                features["image_generation"] = feature_table["image_generation"]
+
+            headers: dict[str, str] = {}
+            raw_headers = provider.get("http_headers", {})
+            if isinstance(raw_headers, dict):
+                for raw_key, value in raw_headers.items():
+                    normalized = _normalize_header_name(str(raw_key))
+                    if (
+                        normalized in AQYIMIN_IMAGE_HEADERS
+                        and isinstance(value, str)
+                        and value in AQYIMIN_SAFE_IMAGE_HEADER_VALUES
+                    ):
+                        # Only the documented extension marker is copied;
+                        # bearer/API credentials can never enter this snapshot.
+                        headers[normalized] = value[:512]
+
             payload = {
-                "schema": 2,
-                "provider_base_url": provider.get("base_url", ""),
+                "schema": 3,
+                "provider_base_url": str(provider.get("base_url", "")),
                 "values": values,
+                "features": features,
+                "http_headers": headers,
             }
-            if not values:
+            if not values and not features and not headers:
                 return
             self.backup_directory.mkdir(parents=True, exist_ok=True)
             temporary = self.image_capability_backup.with_suffix(".json.tmp")
@@ -290,22 +451,88 @@ class ConfigManager:
         except (OSError, TypeError, tomllib.TOMLDecodeError):
             return
 
-    def _restore_aqyimin_image_config(self, text: str) -> str:
+    def _ensure_aqyimin_image_defaults(self, text: str, provider_key: str | None = None) -> str:
+        """Add AP1's documented image-extension markers only when absent."""
+        updated = text
+        try:
+            parsed = tomllib.loads(updated)
+        except tomllib.TOMLDecodeError:
+            return updated
+        if provider_key is None:
+            provider_key = str(parsed.get("model_provider", "")).strip()
+        features = parsed.get("features", {})
+        if not isinstance(features, dict) or "image_generation" not in features:
+            updated = _set_table_key(updated, "features", "image_generation", True)
+        providers = parsed.get("model_providers", {})
+        provider = providers.get(provider_key, {}) if isinstance(providers, dict) else {}
+        if not isinstance(provider, dict):
+            return updated
+        raw_headers = provider.get("http_headers", {})
+        has_marker = False
+        if isinstance(raw_headers, dict):
+            has_marker = any(
+                _normalize_header_name(str(key)) in AQYIMIN_IMAGE_HEADERS
+                for key in raw_headers
+            )
+        if not has_marker and provider_key:
+            updated = _merge_provider_headers(
+                updated,
+                provider_key,
+                {"x-openai-actor-authorization": "local-image-extension"},
+            )
+        return updated
+
+    def _restore_aqyimin_image_config(self, text: str, provider_key: str | None = None) -> str:
         if not self.image_capability_backup.exists():
             # A GLM switch may have just injected the GLM catalog.  Do not
             # leave that catalog attached to the GPT-compatible provider when
             # the original aqyimin config had no custom catalog.
-            return _set_top_level(text, "model_catalog_json", None)
+            updated = _set_top_level(text, "model_catalog_json", None)
+            return self._ensure_aqyimin_image_defaults(updated, provider_key)
         try:
             payload = json.loads(self.image_capability_backup.read_text(encoding="utf-8"))
-            if isinstance(payload, dict) and payload.get("schema") == 2:
+            if isinstance(payload, dict) and payload.get("schema") in {2, 3}:
                 values = payload.get("values", {})
                 if not isinstance(values, dict):
                     return text
                 updated = text
-                for key in ("model", "model_catalog_json", "model_reasoning_effort"):
+                # These fields were always captured by schema 2; clearing a
+                # missing catalog/reasoning value prevents GLM metadata leaking
+                # into API1 on old installations.
+                if payload.get("schema") == 3 and "model" not in values:
+                    # Keep the model selected by the profile when an older or
+                    # hand-written AP1 config omitted a top-level model.
+                    pass
+                else:
+                    updated = _set_top_level(updated, "model", values.get("model"))
+                for key in ("model_catalog_json", "model_reasoning_effort"):
                     updated = _set_top_level(updated, key, values.get(key))
-                return updated
+                if "service_tier" in values:
+                    updated = _set_top_level(updated, "service_tier", values["service_tier"])
+                if payload.get("schema") == 3:
+                    features = payload.get("features", {})
+                    if isinstance(features, dict) and "image_generation" in features:
+                        value = features["image_generation"]
+                        if isinstance(value, bool):
+                            updated = _set_table_key(
+                                updated, "features", "image_generation", value
+                            )
+                    headers = payload.get("http_headers", {})
+                    if provider_key is None:
+                        try:
+                            provider_key = str(tomllib.loads(updated).get("model_provider", ""))
+                        except tomllib.TOMLDecodeError:
+                            provider_key = ""
+                    if isinstance(headers, dict) and provider_key:
+                        safe_headers = {
+                            _normalize_header_name(str(key)): value
+                            for key, value in headers.items()
+                            if _normalize_header_name(str(key)) in AQYIMIN_IMAGE_HEADERS
+                            and isinstance(value, str)
+                            and value in AQYIMIN_SAFE_IMAGE_HEADER_VALUES
+                        }
+                        updated = _merge_provider_headers(updated, provider_key, safe_headers)
+                return self._ensure_aqyimin_image_defaults(updated, provider_key)
 
             # Version 1.2.26 captured only a sparse map and could mistake the
             # ambiguous legacy models.json (which GLM also wrote) for an
@@ -322,11 +549,11 @@ class ConfigManager:
             if is_legacy_glm_catalog:
                 updated = _set_top_level(updated, "model_catalog_json", None)
                 updated = _set_top_level(updated, "model_reasoning_effort", None)
-                return updated
+                return self._ensure_aqyimin_image_defaults(updated, provider_key)
             for key in ("model_catalog_json", "model_reasoning_effort"):
                 if key in values:
                     updated = _set_top_level(updated, key, values[key])
-            return updated
+            return self._ensure_aqyimin_image_defaults(updated, provider_key)
         except (OSError, ValueError, TypeError):
             return text
 
@@ -394,6 +621,38 @@ class ConfigManager:
             providers=providers if isinstance(providers, dict) else {},
         )
 
+    def normalize_active_provider_auth(self) -> bool:
+        """Repair an AP1 config that was incorrectly marked as OpenAI-auth."""
+        original, _ = self.read()
+        try:
+            parsed = tomllib.loads(original)
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigError(f"config.toml 语法错误：{exc}") from exc
+        provider_key = str(parsed.get("model_provider", "")).strip()
+        providers = parsed.get("model_providers", {})
+        provider = providers.get(provider_key, {}) if isinstance(providers, dict) else {}
+        if not isinstance(provider, dict) or not self._is_aqyimin_url(provider.get("base_url")):
+            return False
+        needs_auth_fix = provider.get("requires_openai_auth") is not False or (
+            isinstance(provider.get("experimental_bearer_token"), str)
+            and provider.get("experimental_bearer_token", "").strip()
+            and "env_key" in provider
+        )
+        updated = self._ensure_aqyimin_image_defaults(original, provider_key)
+        if needs_auth_fix:
+            updated = _upsert_provider_table(updated, provider_key, {"requires_openai_auth": False})
+        # A bearer written by this app is the single auth source. Remove an
+        # inherited env_key only when a bearer is present; env-only hand-written
+        # configs remain usable and are not silently stripped.
+        if isinstance(provider.get("experimental_bearer_token"), str) and provider.get(
+            "experimental_bearer_token", ""
+        ).strip():
+            updated = _remove_provider_table_keys(updated, provider_key, ("env_key",))
+        if updated == original:
+            return False
+        self.save_text(updated)
+        return True
+
     def render_profile(
         self,
         profile: ProviderProfile,
@@ -404,11 +663,20 @@ class ConfigManager:
         clear_other_keys: list[str] | None = None,
     ) -> tuple[str, str]:
         original, _ = self.read()
+        original_aqyimin = self._text_uses_aqyimin(original)
+        target_aqyimin = (
+            profile.kind != "official" and self._is_aqyimin_url(profile.base_url)
+        )
+        if original_aqyimin and not target_aqyimin:
+            self._capture_aqyimin_image_config(original)
         if profile.kind == "official":
             updated = _set_top_level(original, "model_provider", None)
             if profile.model:
                 updated = _set_top_level(updated, "model", profile.model)
             updated = _set_top_level(updated, "model_catalog_json", None)
+            if original_aqyimin:
+                updated = _set_top_level(updated, "service_tier", None)
+                updated = _set_table_key(updated, "features", "image_generation", None)
             for key in clear_other_keys or []:
                 updated = _remove_provider_auth_fields(updated, key, remove_headers=True)
             return updated, "openai"
@@ -419,8 +687,6 @@ class ConfigManager:
         if not api_key:
             raise ConfigError(f"{profile.display_name} 尚未配置 API Key。")
         provider_key = stable_provider_key if preserve_provider_key else profile.provider_key
-        if profile.kind == "glm":
-            self._capture_aqyimin_image_config(original)
         updated = _set_top_level(original, "model_provider", provider_key)
         updated = _set_top_level(updated, "model", profile.model)
         if profile.kind == "glm":
@@ -434,14 +700,34 @@ class ConfigManager:
             updated = self._restore_aqyimin_image_config(updated)
         else:
             updated = _set_top_level(updated, "model_catalog_json", None)
+        if not target_aqyimin and (original_aqyimin or profile.kind == "glm"):
+            # The image flag belongs to aqyimin's extension, not to GLM or a
+            # generic relay. Keep unrelated feature flags untouched.
+            updated = _set_table_key(updated, "features", "image_generation", None)
+        if original_aqyimin and not target_aqyimin:
+            updated = _set_top_level(updated, "service_tier", None)
         provider_values = {
             "name": profile.display_name,
             "base_url": profile.base_url,
             "wire_api": "responses",
-            "requires_openai_auth": profile.requires_openai_auth,
+            # aqyimin.chat is an API-key/bearer provider even when the user
+            # chooses to retain a separate official OpenAI login session.
+            "requires_openai_auth": False if target_aqyimin else profile.requires_openai_auth,
             "experimental_bearer_token": api_key,
         }
         updated = _upsert_provider_table(updated, provider_key, provider_values)
+        if target_aqyimin:
+            # The provider table may have been created by the upsert above;
+            # restore the allow-listed image header after it exists.
+            updated = self._restore_aqyimin_image_config(updated, provider_key)
+        else:
+            # Do not let an AP1-only actor header bleed into API2 or GLM when
+            # the stable provider label is reused.
+            updated = _merge_provider_headers(
+                updated,
+                provider_key,
+                {header: None for header in AQYIMIN_IMAGE_HEADERS},
+            )
         # Older/manual configs may still ask Codex to read another env variable
         # even though this tool writes an explicit bearer token. Keep the auth
         # source unambiguous. GLM also must not inherit stale app-specific

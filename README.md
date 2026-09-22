@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.3.1`
+当前交付版本：`1.3.3`
 
 ## 日常使用
 
@@ -21,6 +21,8 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 - API1 / API2：写入各自的 `base_url`、模型和 `experimental_bearer_token`，名称与 Key 可本地修改；新装默认显示名是 `API1` 和 `API2`。
 - GLM：写入 `responses` 协议、GLM 模型、Key 和当前 Codex Home 下的 `models-glm.json`；切换时会同步未归档会话线程的模型字段，重新打开旧会话也会跟随当前 API 模型。团队项目 ID 使用 `proj_xxxxxxx`，保存时自动纠正粘贴产生的空格分隔。旧版本写入的纯 GLM `models.json` 会自动迁移到独立文件。
 - aqyimin.chat GPT 中转：识别 `aqyimin.chat` / `www.aqyimin.chat`，切回该供应商时恢复原配置中的 GPT 模型、图像能力相关模型目录和推理配置；切换 GLM 时使用独立的 `models-glm.json`，不再污染 API1 原来的 `models.json`。旧版本留下的歧义 `models.json` 备份不会被恢复到 API1。
+- AP1 认证兼容：aqyimin.chat 始终使用自己的 bearer/API Key，启动时会把旧配置误写的 `requires_openai_auth = true` 修正为 `false`，并只在缺失时补齐 `features.image_generation` 与 `local-image-extension` 头；明确的人工禁用或自定义值会保留。
+- 图像调用边界：AP1 的 Codex 图像扩展/图片输入与 GPT Image 2 本地生成命令是两条链路。后者由 OpenAI Platform API 凭据驱动，按官方文档读取独立的 `OPENAI_API_KEY`；切换器不会把 AP1/GLM Key 复制到该环境变量。
 - API1 / API2 / GLM 之间切换时直接断开旧路由并写入新配置，不再弹出“保留共存”选择；涉及 OpenAI 直连时仍保留确认提示。
 - GLM 切换会清掉旧配置里遗留的 `env_key` 和 `http_headers`（尤其是 `OPENAI_API_KEY`、`x-openai-actor-authorization`），避免认证来源歧义和应用专用请求头破坏 GLM 流式响应；`experimental_bearer_token` 是唯一认证来源。
 - 保留官方登录态与 GLM 不冲突：GLM 始终写入 `requires_openai_auth = false` 并使用自己的 bearer token；官方凭据缓存保持不变，切回 OpenAI 时继续使用。
@@ -86,10 +88,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.3.1.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.1.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.1.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.1.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.3.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.3.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.3.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.3.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -100,16 +102,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.1.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.1.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.3.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.3.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.1.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.1.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.1.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.3.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.3.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.3.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
@@ -227,6 +229,13 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 - 修复安装/升级时托盘常驻进程无法关闭的问题。非静默安装仍提供“关闭并继续 / 取消”选择；确认关闭后优先通过本地 IPC 让新版本干净退出，旧版本或无响应进程只按 `Codex Provider Switch.exe` 文件过滤强制关闭，不会结束 `codex.exe` 或其他应用。
 - 新增 `--installer-shutdown` 隐藏命令，并让安装器在文件替换前主动请求退出；安装完成后不会自动重启后台进程，避免安装器卡在关闭阶段。
 - 1.3.1 产物 SHA-256：便携版 `0674EBB245283ED2DD634DA57572C241237826F94664837B68E8BEFD9BDCAABA`；安装包 `4BCF1281A7240B67A631330CA460F4F6A9777B56D69821A71A0EE52C5BCD1B4C`。
+
+## 1.3.3 变更
+
+- 修复 AP1 首次导入和启动迁移误用 OpenAI 官方认证的问题，确保 API1 bearer/API Key 链路可调用。
+- 缺少历史 AP1 快照时只补齐缺失的图像扩展标记；切换 GLM/API2/OpenAI 仍会隔离 AP1 专用字段。
+- 明确 GPT Image 2 本地命令需要独立 OpenAI Platform `OPENAI_API_KEY`，不会误用供应商 Key。
+- 1.3.3 产物 SHA-256：便携版 `E08DCCAB83F6ACFDD545A94BD51FA8A18805AC66F09263856A3F19B65DFB632C`；安装包 `19146F465EB01E6286C0D873FBA96F1428E3DD8CD69B629FB7A2C06895083325`。
 
 ## 1.3.0 变更
 

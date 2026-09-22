@@ -208,6 +208,24 @@ class DeploymentPolicyTests(unittest.TestCase):
             self.assertTrue(fake_auth.status().logged_in)
             self.assertEqual(0, fake_auth.logout_calls)
 
+    def test_retained_login_does_not_override_aqyimin_api_key_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            controller = build_controller(Path(name))
+            fake_auth = FakeAuthManager(controller.codex_home, logged_in=True)
+            controller.auth = fake_auth  # type: ignore[assignment]
+            controller.settings.profiles["relay1"].base_url = "https://www.aqyimin.chat/v1"
+            controller.settings.profiles["relay2"].base_url = "https://relay2.example/v1"
+            controller._set_auth_retention(True)
+
+            controller.switch_profile("relay1")
+
+            parsed = tomllib.loads((controller.codex_home / "config.toml").read_text(encoding="utf-8"))
+            provider = parsed["model_providers"]["cch_gz"]
+            self.assertFalse(provider["requires_openai_auth"])
+            self.assertTrue(controller.settings.retain_official_auth)
+            self.assertTrue(controller.settings.profiles["relay2"].requires_openai_auth)
+            self.assertTrue(fake_auth.status().logged_in)
+
     def test_restore_from_glm_keeps_login_and_rewrites_relay_policy(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             controller = build_controller(Path(name), active_glm=True)

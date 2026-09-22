@@ -28,6 +28,14 @@ class SettingsError(RuntimeError):
     pass
 
 
+def _is_aqyimin_url(value: str) -> bool:
+    try:
+        host = (urlparse(value).hostname or "").casefold()
+    except ValueError:
+        return False
+    return host == "aqyimin.chat" or host.endswith(".aqyimin.chat")
+
+
 class _DataBlob(ctypes.Structure):
     _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_byte))]
 
@@ -180,14 +188,24 @@ class SettingsStore:
         base_url = str(current_provider.get("base_url", ""))
         current_name = str(current_provider.get("name", "")).strip()
         current_model = snapshot.model
-        retain_official_auth = bool(current_provider.get("requires_openai_auth", True))
+        current_is_aqyimin = _is_aqyimin_url(base_url)
+        # ``requires_openai_auth`` describes the active provider's wire
+        # authentication, not whether a separate official account should be
+        # retained. AP1 is bearer/API-key-only, so never inherit ``true`` from
+        # an old config into its provider profile. Keep the global retention
+        # choice independent until the deployment wizard confirms it.
+        retain_official_auth = (
+            True
+            if current_is_aqyimin
+            else bool(current_provider.get("requires_openai_auth", True))
+        )
         settings.retain_official_auth = retain_official_auth
         settings.profiles["openai"].model = current_model
         for profile_id in ("relay1", "relay2"):
             profile = settings.profiles[profile_id]
             profile.base_url = base_url
             profile.model = current_model
-            profile.requires_openai_auth = retain_official_auth
+            profile.requires_openai_auth = False if current_is_aqyimin else retain_official_auth
         if current_name:
             settings.profiles["relay1"].display_name = current_name[:40]
         credentials: dict[str, str] = {}
@@ -229,7 +247,10 @@ def validate_settings(settings: AppSettings) -> None:
     if settings.last_relay_profile_id not in {"relay1", "relay2"}:
         settings.last_relay_profile_id = "relay1"
     for profile_id in ("relay1", "relay2"):
-        settings.profiles[profile_id].requires_openai_auth = settings.retain_official_auth
+        profile = settings.profiles[profile_id]
+        profile.requires_openai_auth = (
+            False if _is_aqyimin_url(profile.base_url.strip()) else settings.retain_official_auth
+        )
     for profile in settings.profiles.values():
         profile.display_name = profile.display_name.strip()[:40]
         profile.provider_key = profile.provider_key.strip()

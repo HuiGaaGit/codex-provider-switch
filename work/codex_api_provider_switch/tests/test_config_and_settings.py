@@ -112,6 +112,243 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual("C:/Users/test/.codex/gpt-models.json", restored["model_catalog_json"])
         self.assertEqual("https://www.aqyimin.chat/v1", restored["model_providers"]["custom"]["base_url"])
 
+    def test_aqyimin_render_forces_api_key_auth_even_when_profile_requests_official(self) -> None:
+        profile = ProviderProfile(
+            "relay1",
+            "API1",
+            "relay",
+            "relay_1",
+            "https://www.aqyimin.chat/v1",
+            "gpt-5.6-sol",
+            requires_openai_auth=True,
+        )
+        self.manager.apply_profile(profile, "ap1-secret", True, "cch_gz")
+        parsed = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        provider = parsed["model_providers"]["cch_gz"]
+        self.assertFalse(provider["requires_openai_auth"])
+        self.assertEqual("ap1-secret", provider["experimental_bearer_token"])
+
+    def test_aqyimin_switch_adds_missing_image_extension_defaults(self) -> None:
+        (self.home / "config.toml").write_text(
+            'model_provider = "custom"\nmodel = "gpt-6-astra"\n\n'
+            '[model_providers.custom]\n'
+            'base_url = "https://www.aqyimin.chat/v1"\n'
+            'wire_api = "responses"\n',
+            encoding="utf-8",
+        )
+        profile = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://www.aqyimin.chat/v1", "gpt-6-astra"
+        )
+        self.manager.apply_profile(profile, "ap1-secret", True, "custom")
+        parsed = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertTrue(parsed["features"]["image_generation"])
+        self.assertEqual(
+            "local-image-extension",
+            parsed["model_providers"]["custom"]["http_headers"]["x-openai-actor-authorization"],
+        )
+
+    def test_aqyimin_switch_keeps_explicit_image_disable(self) -> None:
+        (self.home / "config.toml").write_text(
+            'model_provider = "custom"\n\n[features]\nimage_generation = false\n\n'
+            '[model_providers.custom]\n'
+            'base_url = "https://www.aqyimin.chat/v1"\n'
+            'http_headers = { x-openai-actor-authorization = "manual-marker" }\n',
+            encoding="utf-8",
+        )
+        profile = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://www.aqyimin.chat/v1", "gpt-6-astra"
+        )
+        self.manager.apply_profile(profile, "ap1-secret", True, "custom")
+        parsed = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertFalse(parsed["features"]["image_generation"])
+        self.assertEqual(
+            "manual-marker",
+            parsed["model_providers"]["custom"]["http_headers"]["x-openai-actor-authorization"],
+        )
+
+    def test_existing_aqyimin_config_is_repaired_without_printing_or_replacing_key(self) -> None:
+        original = (
+            'model_provider = "custom"\n\n'
+            '[model_providers.custom]\n'
+            'base_url = "https://www.aqyimin.chat/v1"\n'
+            'requires_openai_auth = true\n'
+            'experimental_bearer_token = "ap1-secret"\n'
+            'env_key = "OPENAI_API_KEY"\n'
+        )
+        (self.home / "config.toml").write_text(original, encoding="utf-8")
+        changed = self.manager.normalize_active_provider_auth()
+        self.assertTrue(changed)
+        parsed = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        provider = parsed["model_providers"]["custom"]
+        self.assertFalse(provider["requires_openai_auth"])
+        self.assertEqual("ap1-secret", provider["experimental_bearer_token"])
+        self.assertNotIn("env_key", provider)
+        self.assertTrue(parsed["features"]["image_generation"])
+        self.assertEqual(
+            "local-image-extension",
+            provider["http_headers"]["x-openai-actor-authorization"],
+        )
+        self.assertNotIn("ap1-secret", self.manager.image_capability_backup.read_text(encoding="utf-8") if self.manager.image_capability_backup.exists() else "")
+
+    def test_aqyimin_compatibility_round_trip_restores_image_header_and_service_tier(self) -> None:
+        original = (
+            'model_provider = "custom"\n'
+            'service_tier = "priority"\n'
+            'model = "gpt-6-astra"\n'
+            'model_reasoning_effort = "max"\n\n'
+            '[features]\n'
+            'image_generation = true\n'
+            'steer = true\n\n'
+            '[model_providers.custom]\n'
+            'name = "custom"\n'
+            'base_url = "https://www.aqyimin.chat/v1"\n'
+            'wire_api = "responses"\n'
+            'env_key = "OPENAI_API_KEY"\n'
+            'requires_openai_auth = false\n'
+            'http_headers = { x-openai-actor-authorization = "local-image-extension", x-tenant = "keep-me" }\n'
+            'experimental_bearer_token = "ap1-secret-do-not-persist"\n'
+        )
+        (self.home / "config.toml").write_text(original, encoding="utf-8")
+        glm_catalog = self.home / "models-glm.json"
+        glm_catalog.write_text(
+            '{"models": [{"slug": "glm-5.3-flash", "display_name": "GLM", "context_window": 1000}]}',
+            encoding="utf-8",
+        )
+        glm = ProviderProfile("glm", "GLM", "glm", "ZAI", "https://open.bigmodel.cn/api/v1", "glm-5.3-flash")
+        self.manager.apply_profile(glm, "glm-secret", True, "custom", glm_catalog)
+        glm_text = (self.home / "config.toml").read_text(encoding="utf-8")
+        glm_config = tomllib.loads(glm_text)
+        self.assertNotIn("image_generation", glm_config.get("features", {}))
+        self.assertNotIn("x-openai-actor-authorization", glm_text)
+        self.assertTrue(glm_config["features"]["steer"])
+        self.assertNotIn("ap1-secret-do-not-persist", self.manager.image_capability_backup.read_text(encoding="utf-8"))
+
+        aqyimin = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://www.aqyimin.chat/v1",
+            "gpt-6-astra", requires_openai_auth=False,
+        )
+        self.manager.apply_profile(aqyimin, "new-ap1-secret", True, "custom")
+        restored_text = (self.home / "config.toml").read_text(encoding="utf-8")
+        restored = tomllib.loads(restored_text)
+        self.assertEqual("priority", restored["service_tier"])
+        self.assertEqual("gpt-6-astra", restored["model"])
+        self.assertEqual("max", restored["model_reasoning_effort"])
+        self.assertTrue(restored["features"]["image_generation"])
+        self.assertTrue(restored["features"]["steer"])
+        self.assertEqual(
+            "local-image-extension",
+            restored["model_providers"]["custom"]["http_headers"]["x-openai-actor-authorization"],
+        )
+        self.assertEqual("keep-me", restored["model_providers"]["custom"]["http_headers"]["x-tenant"])
+        self.assertEqual("new-ap1-secret", restored["model_providers"]["custom"]["experimental_bearer_token"])
+        self.assertNotIn("env_key", restored["model_providers"]["custom"])
+
+    def test_switching_from_aqyimin_to_relay_removes_ap1_image_settings(self) -> None:
+        (self.home / "config.toml").write_text(
+            'model_provider = "custom"\n'
+            'service_tier = "priority"\n'
+            'model = "gpt-6-astra"\n\n'
+            '[features]\n'
+            'image_generation = true\n'
+            'steer = true\n\n'
+            '[model_providers.custom]\n'
+            'base_url = "https://www.aqyimin.chat/v1"\n'
+            'wire_api = "responses"\n'
+            'http_headers = { x-openai-actor-authorization = "local-image-extension" }\n'
+            'experimental_bearer_token = "old"\n',
+            encoding="utf-8",
+        )
+        relay = ProviderProfile(
+            "relay2", "API2", "relay", "relay_2", "https://relay.example/v1", "gpt-5.6-sol",
+            requires_openai_auth=False,
+        )
+        self.manager.apply_profile(relay, "relay-secret", True, "custom")
+        text = (self.home / "config.toml").read_text(encoding="utf-8")
+        parsed = tomllib.loads(text)
+        self.assertNotIn("image_generation", parsed.get("features", {}))
+        self.assertNotIn("x-openai-actor-authorization", text)
+        self.assertNotIn("service_tier", parsed)
+        self.assertTrue(parsed["features"]["steer"])
+
+        aqyimin = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://www.aqyimin.chat/v1", "gpt-6-astra"
+        )
+        self.manager.apply_profile(aqyimin, "ap1-secret", True, "custom")
+        restored = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertEqual("priority", restored["service_tier"])
+        self.assertTrue(restored["features"]["image_generation"])
+        self.assertEqual(
+            "local-image-extension",
+            restored["model_providers"]["custom"]["http_headers"]["x-openai-actor-authorization"],
+        )
+
+    def test_aqyimin_compatibility_round_trip_through_official_route(self) -> None:
+        (self.home / "config.toml").write_text(
+            'model_provider = "custom"\n'
+            'service_tier = "priority"\n'
+            'model = "gpt-6-astra"\n\n'
+            '[features]\nimage_generation = true\n\n'
+            '[model_providers.custom]\n'
+            'base_url = "https://www.aqyimin.chat/v1"\n'
+            'wire_api = "responses"\n'
+            'http_headers = { x-openai-actor-authorization = "local-image-extension" }\n'
+            'experimental_bearer_token = "old"\n',
+            encoding="utf-8",
+        )
+        official = ProviderProfile(
+            "openai", "OpenAI 直连", "official", "openai", model="gpt-6-astra"
+        )
+        self.manager.apply_profile(
+            official, "", True, "custom", clear_other_keys=["custom"]
+        )
+        official_text = (self.home / "config.toml").read_text(encoding="utf-8")
+        official_config = tomllib.loads(official_text)
+        self.assertNotIn("model_provider", official_config)
+        self.assertNotIn("service_tier", official_config)
+        self.assertNotIn("image_generation", official_config.get("features", {}))
+        self.assertNotIn("x-openai-actor-authorization", official_text)
+
+        aqyimin = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://www.aqyimin.chat/v1", "gpt-6-astra"
+        )
+        self.manager.apply_profile(aqyimin, "new", True, "custom")
+        restored = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertEqual("priority", restored["service_tier"])
+        self.assertTrue(restored["features"]["image_generation"])
+        self.assertEqual(
+            "local-image-extension",
+            restored["model_providers"]["custom"]["http_headers"]["x-openai-actor-authorization"],
+        )
+
+    def test_aqyimin_restore_keeps_profile_model_when_legacy_snapshot_has_none(self) -> None:
+        (self.home / "config.toml").write_text(
+            'model_provider = "custom"\nmodel = "glm-5.3-flash"\n'
+            'model_catalog_json = "C:/temp/models-glm.json"\n\n'
+            '[model_providers.custom]\nbase_url = "https://open.bigmodel.cn/api/v1"\n'
+            'wire_api = "responses"\n',
+            encoding="utf-8",
+        )
+        self.manager.image_capability_backup.parent.mkdir(parents=True, exist_ok=True)
+        self.manager.image_capability_backup.write_text(
+            json.dumps(
+                {
+                    "schema": 3,
+                    "provider_base_url": "https://www.aqyimin.chat/v1",
+                    "values": {},
+                    "features": {},
+                    "http_headers": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        aqyimin = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://www.aqyimin.chat/v1", "gpt-6-astra"
+        )
+        self.manager.apply_profile(aqyimin, "new-key", True, "custom")
+        parsed = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertEqual("gpt-6-astra", parsed["model"])
+        self.assertNotIn("model_catalog_json", parsed)
+
     def test_legacy_ambiguous_models_catalog_is_not_restored_to_api1(self) -> None:
         original = (
             'model_provider = "custom"\n'
@@ -144,6 +381,9 @@ class ConfigManagerTests(unittest.TestCase):
         (self.home / "config.toml").write_text(
             'model_provider = "custom"\n'
             'model = "glm-5.3-flash"\n\n'
+            '[features]\n'
+            'image_generation = true\n'
+            'steer = true\n\n'
             '[model_providers.custom]\n'
             'name = "GLM"\n'
             'base_url = "https://open.bigmodel.cn/api/v1"\n'
@@ -169,6 +409,8 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual("glm-secret", provider["experimental_bearer_token"])
         self.assertNotIn("OPENAI_API_KEY", text)
         self.assertNotIn("x-openai-actor-authorization", text)
+        self.assertNotIn("image_generation", parsed["features"])
+        self.assertTrue(parsed["features"]["steer"])
 
     def test_openai_switch_keeps_custom_registration(self) -> None:
         profile = ProviderProfile("openai", "OpenAI 直连", "official", "openai", model="gpt-5.6-sol")
@@ -311,6 +553,30 @@ class SettingsAndCatalogTests(unittest.TestCase):
             self.assertEqual("主中转", settings.profiles["relay1"].display_name)
             self.assertEqual("https://relay.example/v1", settings.profiles["relay2"].base_url)
             self.assertEqual({"relay1": "first", "relay2": "second"}, credentials)
+
+    def test_bootstrap_never_treats_aqyimin_auth_flag_as_official_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            snapshot = ConfigSnapshot(
+                path=str(root / ".codex" / "config.toml"),
+                model_provider="custom",
+                model="gpt-6-astra",
+                providers={
+                    "custom": {
+                        "name": "API1",
+                        "base_url": "https://www.aqyimin.chat/v1",
+                        "requires_openai_auth": True,
+                        "experimental_bearer_token": "ap1-secret",
+                    }
+                },
+            )
+            settings, credentials = SettingsStore(root / "data").bootstrap(
+                snapshot, root / "missing-legacy.json"
+            )
+            self.assertTrue(settings.retain_official_auth)
+            self.assertFalse(settings.profiles["relay1"].requires_openai_auth)
+            self.assertFalse(settings.profiles["relay2"].requires_openai_auth)
+            self.assertEqual({"relay1": "ap1-secret"}, credentials)
 
     def test_catalog_save_and_validation(self) -> None:
         with tempfile.TemporaryDirectory() as name:
