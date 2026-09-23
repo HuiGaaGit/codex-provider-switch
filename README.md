@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.3.4`
+当前交付版本：`1.3.5`
 
 ## 日常使用
 
@@ -89,10 +89,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.3.4.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.4.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.4.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.4.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.5.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.5.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.5.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.5.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -103,16 +103,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.4.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.4.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.5.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.5.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.4.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.4.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.4.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.5.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.5.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.5.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
@@ -244,6 +244,12 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 - 监控页移除供应商可用性时间线/条形区域，避免无实际请求时产生误导；保留请求健康摘要、按有效请求加权的平均首响应时间、错误率和 Token 使用量仪表盘。
 - 新增 API1 URL 迁移回归测试，验证 AP1 残留配置不会泄漏到普通中转。
 - 1.3.4 产物 SHA-256：便携版 `C27678B87C5BFEB1E855C38246E74D8A84323A832A0992A4D67259D94F1C3B9F`；安装包 `8D574E678B99482DC44E0D45C1015B302ED19C81FC2ECE43416536782E2D3112`。
+
+## 1.3.5 变更
+
+- 配置预览及调整保存 TOML 时，自动修复明确的 Windows 单反斜杠路径和常见未加引号字符串；无法自动修复时显示行列、指针和建议。
+- TOML 错误提示会脱敏 `experimental_bearer_token`、API Key、Authorization、Token、Secret 和 Password，不会把密钥写入界面、日志或测试输出。
+- 1.3.5 产物 SHA-256：便携版 `56CF7CD4308F506F732877F7BD3ABB9040B7C9F8970E9671D8D3E136CC3C2D9A`；安装包 `53BB346516B75A6071D73EE8CDC14D59B41430D9FBBB389D02D49C9479401256`。
 
 ## 1.3.0 变更
 

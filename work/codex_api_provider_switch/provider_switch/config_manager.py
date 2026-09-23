@@ -65,6 +65,145 @@ def _toml_value(value: str | bool | int | float) -> str:
     return str(value)
 
 
+
+_COMMON_TOML_STRING_KEYS = {
+    "model_provider",
+    "model",
+    "model_reasoning_effort",
+    "plan_mode_reasoning_effort",
+    "model_reasoning_summary",
+    "model_verbosity",
+    "approvals_reviewer",
+    "preferred_auth_method",
+    "sandbox_mode",
+    "approval_policy",
+    "service_tier",
+    "name",
+    "base_url",
+    "wire_api",
+    "experimental_bearer_token",
+    "env_key",
+    "model_catalog_json",
+    "trust_level",
+    "command",
+    "source",
+    "CODEX_HOME",
+    "NODE_REPL_NODE_PATH",
+    "NODE_REPL_NODE_MODULE_DIRS",
+    "NODE_REPL_TRUSTED_CODE_PATHS",
+}
+_TOML_BASIC_STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+_TOML_ASSIGNMENT_RE = re.compile(
+    r"^(?P<prefix>\s*(?P<key>[A-Za-z0-9_-]+)\s*=\s*)"
+    r"(?P<value>[^#\r\n]*?)(?P<comment>\s+#.*)?(?P<newline>\r?\n)?$"
+)
+_TOML_ERROR_LOCATION_RE = re.compile(r"at line (?P<line>\d+), column (?P<column>\d+)")
+_TOML_SENSITIVE_VALUE_RE = re.compile(
+    r"(?i)(?P<key>experimental_bearer_token|api[_-]?key|authorization|token|secret|password)"
+    r"(\s*=\s*)(?P<value>\".*?\"|'[^']*'|[^,}\s]+)"
+)
+
+
+def _repair_basic_string_body(body: str) -> str:
+    """Escape Windows backslashes while preserving valid TOML escapes."""
+    path_like = bool(re.search(r"(?:[A-Za-z]:\\|\\\\\?|\\Users\\)", body))
+    result: list[str] = []
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char != "\\":
+            result.append(char)
+            index += 1
+            continue
+        if index + 1 >= len(body):
+            result.append(r"\\")
+            index += 1
+            continue
+        next_char = body[index + 1]
+        if path_like:
+            if next_char == "\\":
+                result.append(r"\\\\")
+                index += 2
+            else:
+                result.append(r"\\")
+                index += 1
+            continue
+        if next_char in "btnfr\\\"":
+            result.extend(("\\", next_char))
+            index += 2
+            continue
+        if next_char == "u" and re.fullmatch(r"[0-9A-Fa-f]{4}", body[index + 2 : index + 6]):
+            result.extend(("\\", body[index + 1 : index + 6]))
+            index += 6
+            continue
+        if next_char == "U" and re.fullmatch(r"[0-9A-Fa-f]{8}", body[index + 2 : index + 10]):
+            result.extend(("\\", body[index + 1 : index + 10]))
+            index += 10
+            continue
+        result.append(r"\\")
+        index += 1
+    return "".join(result)
+
+
+def _repair_common_toml(text: str) -> str:
+    """Repair only unambiguous string formatting mistakes common on Windows."""
+    repaired_lines: list[str] = []
+    for line in text.splitlines(keepends=True):
+        line = _TOML_BASIC_STRING_RE.sub(
+            lambda match: '"' + _repair_basic_string_body(match.group(0)[1:-1]) + '"',
+            line,
+        )
+        match = _TOML_ASSIGNMENT_RE.match(line)
+        if match:
+            key = match.group("key")
+            value = match.group("value").strip()
+            if (
+                key in _COMMON_TOML_STRING_KEYS
+                and value
+                and value not in {"true", "false"}
+                and not value.startswith(("\"", "'", "[", "{"))
+                and not re.fullmatch(r"[-+]?\d+(?:\.\d+)?", value)
+            ):
+                line = (
+                    match.group("prefix")
+                    + _toml_value(value)
+                    + (match.group("comment") or "")
+                    + (match.group("newline") or "")
+                )
+        repaired_lines.append(line)
+    return "".join(repaired_lines)
+
+
+def _redact_toml_line(line: str) -> str:
+    return _TOML_SENSITIVE_VALUE_RE.sub(
+        lambda match: f"{match.group('key')} = <已隐藏>", line
+    )
+
+
+def format_toml_error(text: str, error: tomllib.TOMLDecodeError) -> str:
+    """Make parser errors actionable without exposing bearer/API credentials."""
+    message = str(error)
+    location = _TOML_ERROR_LOCATION_RE.search(message)
+    if not location:
+        return f"配置 TOML 无效：{message}"
+    line_number = int(location.group("line"))
+    column_number = int(location.group("column"))
+    lines = text.splitlines()
+    source = lines[line_number - 1] if 0 < line_number <= len(lines) else ""
+    redacted = _redact_toml_line(source)
+    pointer = " " * max(column_number - 1, 0) + "^"
+    if "\\" in source:
+        hint = "Windows 路径请使用正斜杠（C:/Users/...），或在双引号内把每个反斜杠写成 \\\\."
+    elif "=" in source and re.search(r"=\s*[^\"'\[{#]+", source):
+        hint = "字符串值需要加引号；布尔值只能写 true 或 false。"
+    else:
+        hint = "请检查该行的引号、逗号、括号和数组格式。"
+    return (
+        f"配置 TOML 无效：第 {line_number} 行，第 {column_number} 列。\n"
+        f"{redacted}\n{pointer}\n{hint}\n解析器信息：{message}"
+    )
+
+
 def _line_ending(line: str) -> str:
     if line.endswith("\r\n"):
         return "\r\n"
@@ -367,6 +506,7 @@ class ConfigManager:
         self.config_path = self.codex_home / "config.toml"
         self.backup_directory = self.codex_home / BACKUP_DIRECTORY_NAME
         self._lock = threading.RLock()
+        self.last_repair_applied = False
 
     @property
     def image_capability_backup(self) -> Path:
@@ -607,24 +747,40 @@ class ConfigManager:
         text, _ = self.read()
         return text
 
+    @classmethod
+    def parse_toml_text(
+        cls, text: str, *, auto_repair: bool = False
+    ) -> tuple[dict[str, Any], str, bool]:
+        """Parse editor text and optionally repair unambiguous Windows string syntax."""
+        try:
+            return tomllib.loads(text), text, False
+        except tomllib.TOMLDecodeError as exc:
+            if auto_repair:
+                repaired = _repair_common_toml(text)
+                if repaired != text:
+                    try:
+                        return tomllib.loads(repaired), repaired, True
+                    except tomllib.TOMLDecodeError:
+                        pass
+            raise ConfigError(format_toml_error(text, exc)) from exc
+
     def save_text(self, text: str) -> tuple[ConfigSnapshot, Path | None]:
         """Validate and save a user-edited config.toml with rollback support."""
-        try:
-            parsed = tomllib.loads(text)
-        except tomllib.TOMLDecodeError as exc:
-            raise ConfigError(f"配置 TOML 无效：{exc}") from exc
+        self.last_repair_applied = False
+        parsed, candidate, repaired = self.parse_toml_text(text, auto_repair=True)
+        self.last_repair_applied = repaired
         providers = parsed.get("model_providers", {})
         if not isinstance(providers, dict):
             raise ConfigError("model_providers 必须是配置表。")
         self.ensure_config()
         with self._lock:
             original, encoding = self.read()
-            if text == original:
+            if candidate == original:
                 return self.snapshot(), None
             backup = self._create_backup()
             temporary = self.config_path.with_name("config.toml.provider-switch.tmp")
             try:
-                temporary.write_text(text, encoding=encoding, newline="")
+                temporary.write_text(candidate, encoding=encoding, newline="")
                 os.replace(temporary, self.config_path)
                 snapshot = self.snapshot()
             except Exception as exc:

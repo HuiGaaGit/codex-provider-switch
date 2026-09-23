@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 from .auth_manager import AuthStatus
 from .catalog import resource_path, validate_catalog_text
 from .constants import APP_NAME, APP_VERSION
+from .config_manager import ConfigError, ConfigManager
 from .controller import ApplicationController, OperationResult
 from .models import ConfigSnapshot, ProviderProfile, ProviderTelemetry, TokenUsage
 from .monitor_history import HealthRecord, MonitorHistory, ProviderSummary
@@ -1449,18 +1450,26 @@ class ProviderSwitchWindow(QMainWindow):
 
     def load_config_from_disk(self) -> None:
         try:
-            self._set_config_text(self.controller.config.current_text())
-            tomllib.loads(self.config_editor.toPlainText())
+            text = self.controller.config.current_text()
+            ConfigManager.parse_toml_text(text)
+            self._set_config_text(text)
             self.config_hint.setText("已读取当前配置；可直接调整，保存后会同步本机供应商档案")
         except Exception as exc:
             QMessageBox.warning(self, "读取失败", str(exc))
 
     def validate_config_editor(self) -> None:
+        text = self.config_editor.toPlainText()
         try:
-            tomllib.loads(self.config_editor.toPlainText())
-            self.config_hint.setText("TOML 校验通过")
-        except tomllib.TOMLDecodeError as exc:
-            QMessageBox.warning(self, "校验失败", f"配置 TOML 无效：{exc}")
+            _, repaired, was_repaired = ConfigManager.parse_toml_text(
+                text, auto_repair=True
+            )
+            if was_repaired:
+                self._set_config_text(repaired)
+                self.config_hint.setText("已自动修复常见 Windows 路径/裸字符串格式；请确认后保存")
+            else:
+                self.config_hint.setText("TOML 校验通过")
+        except ConfigError as exc:
+            QMessageBox.warning(self, "校验失败", str(exc))
 
     def save_config_editor(self) -> None:
         text = self.config_editor.toPlainText()
@@ -1472,10 +1481,14 @@ class ProviderSwitchWindow(QMainWindow):
         )
 
     def _handle_config_saved(self, snapshot: ConfigSnapshot) -> None:
+        repaired = bool(getattr(self.controller.config, "last_repair_applied", False))
+        if repaired:
+            self._set_config_text(self.controller.config.current_text())
         self._set_busy(False, "供应商配置已保存")
         active = snapshot.model_provider or "openai"
         model = snapshot.model or "Codex 默认"
-        self.config_hint.setText(f"已保存配置；当前供应商 {active} · 模型 {model}")
+        suffix = "；已自动修复常见 TOML 格式" if repaired else ""
+        self.config_hint.setText(f"已保存配置；当前供应商 {active} · 模型 {model}{suffix}")
         self._set_footer("配置已保存，后续切换会保留人工兼容调整")
         self.refresh_all(local_only=True)
 

@@ -42,6 +42,53 @@ class ConfigManagerTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_manual_toml_repairs_common_windows_strings_before_save(self) -> None:
+        text = (
+            "model_provider = cch_gz\n"
+            "model = gpt-5.6-sol\n"
+            'model_catalog_json = "C:\\Users\\hd\\.codex\\models-glm.json"\n\n'
+            "[model_providers.cch_gz]\n"
+            "name = cch\n"
+            "base_url = https://relay.example/v1\n"
+            "wire_api = responses\n"
+            "requires_openai_auth = true\n"
+            "experimental_bearer_token = sk-redacted\n"
+        )
+
+        parsed, repaired, changed = ConfigManager.parse_toml_text(text, auto_repair=True)
+
+        self.assertTrue(changed)
+        self.assertEqual("cch_gz", parsed["model_provider"])
+        self.assertEqual("https://relay.example/v1", parsed["model_providers"]["cch_gz"]["base_url"])
+        self.assertEqual("C:\\Users\\hd\\.codex\\models-glm.json", parsed["model_catalog_json"])
+        self.assertNotEqual(text, repaired)
+
+        snapshot, backup = self.manager.save_text(text)
+        saved = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertEqual("cch_gz", snapshot.model_provider)
+        self.assertEqual("C:\\Users\\hd\\.codex\\models-glm.json", saved["model_catalog_json"])
+        self.assertTrue(self.manager.last_repair_applied)
+        self.assertIsNotNone(backup)
+
+    def test_toml_error_points_to_line_without_exposing_secret(self) -> None:
+        secret = "sk-secret-must-not-appear"
+        text = (
+            'model_provider = "cch_gz"\n'
+            "\n"
+            "[model_providers.cch_gz]\n"
+            f'experimental_bearer_token = "{secret}"\n'
+            "broken = [ invalid ]\n"
+        )
+
+        with self.assertRaises(Exception) as context:
+            ConfigManager.parse_toml_text(text)
+
+        message = str(context.exception)
+        self.assertIn("第 5 行", message)
+        self.assertIn("第", message)
+        self.assertNotIn(secret, message)
+        self.assertIn("broken = [ invalid ]", message)
+
     def test_relay_switch_keeps_stable_provider_and_unrelated_config(self) -> None:
         profile = ProviderProfile(
             "relay2", "备用中转", "relay", "relay_2", "https://relay2.example/v1", "gpt-5.6-sol", requires_openai_auth=True
