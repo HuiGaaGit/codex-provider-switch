@@ -728,6 +728,24 @@ class ConfigManager:
         except (OSError, ValueError, TypeError):
             return text
 
+    @staticmethod
+    def _enable_relay_fast_mode(text: str, *, preserve_explicit_tier: bool = False) -> str:
+        """Enable Codex Fast mode for API relays without changing other features."""
+        updated = text
+        keep_existing = False
+        if preserve_explicit_tier:
+            try:
+                tier = tomllib.loads(updated).get("service_tier")
+                keep_existing = isinstance(tier, str) and tier.strip().casefold() not in {
+                    "",
+                    "default",
+                }
+            except tomllib.TOMLDecodeError:
+                keep_existing = False
+        if not keep_existing:
+            updated = _set_top_level(updated, "service_tier", "fast")
+        return _set_table_key(updated, "features", "fast_mode", True)
+
     def ensure_config(self) -> None:
         if self.config_path.exists():
             return
@@ -895,6 +913,17 @@ class ConfigManager:
             updated = _set_table_key(updated, "features", "image_generation", None)
         if leaving_aqyimin:
             updated = _set_top_level(updated, "service_tier", None)
+        if profile.kind == "glm":
+            # Fast mode is a relay/OpenAI service tier. Do not leave it in
+            # the GLM route where it can be rejected or misinterpreted.
+            updated = _set_top_level(updated, "service_tier", None)
+            updated = _set_table_key(updated, "features", "fast_mode", None)
+        elif profile.kind == "relay":
+            # API1/API2 get Fast mode by default. AP1 may have an explicit
+            # priority tier that should remain compatible when it returns.
+            updated = self._enable_relay_fast_mode(
+                updated, preserve_explicit_tier=target_aqyimin
+            )
         provider_values = {
             "name": profile.display_name,
             "base_url": profile.base_url,

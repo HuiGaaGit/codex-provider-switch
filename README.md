@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.3.5`
+当前交付版本：`1.3.6`
 
 ## 日常使用
 
@@ -19,7 +19,9 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 
 - OpenAI 直连：取消自定义 `model_provider` 默认值，继续使用 Codex 当前 OpenAI/ChatGPT 登录；只有检测到保留的官方登录态时按钮才可用。
 - API1 / API2：写入各自的 `base_url`、模型和 `experimental_bearer_token`，名称与 Key 可本地修改；新装默认显示名是 `API1` 和 `API2`。
+- API1 / API2 默认写入 Codex Fast mode：`service_tier = "fast"` 与 `[features].fast_mode = true`；如果 API1 使用 `aqyimin.chat` 且原配置已有明确 `priority`，会保留该供应商的显式 tier，同时启用 Fast mode 标记。
 - GLM：写入 `responses` 协议、GLM 模型、Key 和当前 Codex Home 下的 `models-glm.json`；切换时会同步未归档会话线程的模型字段，重新打开旧会话也会跟随当前 API 模型。团队项目 ID 使用 `proj_xxxxxxx`，保存时自动纠正粘贴产生的空格分隔。旧版本写入的纯 GLM `models.json` 会自动迁移到独立文件。
+- 切换到 GLM 时会清理顶层 `service_tier` 与 `[features].fast_mode`，保留其它功能开关，避免 Fast mode 参数影响 GLM 请求。
 - aqyimin.chat GPT 中转：只有 API1 地址的主机属于 `aqyimin.chat`（含 `www` 和子域名）时，切回该供应商才恢复原配置中的 GPT 模型、图像能力相关模型目录和推理配置；切换 GLM 时使用独立的 `models-glm.json`，不再污染 API1 原来的 `models.json`。旧版本留下的歧义 `models.json` 备份不会被恢复到 API1。API1 改成其他供应商 URL 后，完全按 API2 的通用中转策略处理，并清理残留的 AP1 专用字段。
 - AP1 认证兼容：aqyimin.chat 始终使用自己的 bearer/API Key，启动时会把旧配置误写的 `requires_openai_auth = true` 修正为 `false`，并只在缺失时补齐 `features.image_generation` 与 `local-image-extension` 头；明确的人工禁用或自定义值会保留。
 - 图像调用边界：AP1 的 Codex 图像扩展/图片输入与 GPT Image 2 本地生成命令是两条链路。后者由 OpenAI Platform API 凭据驱动，按官方文档读取独立的 `OPENAI_API_KEY`；切换器不会把 AP1/GLM Key 复制到该环境变量。
@@ -89,10 +91,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.3.5.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.5.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.5.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.5.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.6.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.6.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.6.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.6.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -103,16 +105,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.5.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.5.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.6.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.6.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.5.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.5.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.5.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.6.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.6.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.6.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
@@ -250,6 +252,12 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 - 配置预览及调整保存 TOML 时，自动修复明确的 Windows 单反斜杠路径和常见未加引号字符串；无法自动修复时显示行列、指针和建议。
 - TOML 错误提示会脱敏 `experimental_bearer_token`、API Key、Authorization、Token、Secret 和 Password，不会把密钥写入界面、日志或测试输出。
 - 1.3.5 产物 SHA-256：便携版 `56CF7CD4308F506F732877F7BD3ABB9040B7C9F8970E9671D8D3E136CC3C2D9A`；安装包 `53BB346516B75A6071D73EE8CDC14D59B41430D9FBBB389D02D49C9479401256`。
+
+## 1.3.6 变更
+
+- API1/API2 切换时默认写入 `service_tier = "fast"` 和 `[features].fast_mode = true`。
+- 切换到 GLM 时清理 Fast mode 字段，但保留其它 `[features]` 配置；API1 的 aqyimin 显式 `priority` tier 继续兼容保留。
+- 1.3.6 产物 SHA-256：便携版 `916C1C766C0CA6C3FC5EC5C88885F20004EEF127CC93949A3E38D575F8C47414`；安装包 `97E1BB6B1905A7715747E53F2BB5BB9CF720593FECE6BB64A72EAB896A2D753E`。
 
 ## 1.3.0 变更
 

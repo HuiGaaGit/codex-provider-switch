@@ -1,4 +1,4 @@
-# Codex Provider Switch v1.3.5
+# Codex Provider Switch v1.3.6
 
 源码入口：`codex_api_provider_switch.py`
 
@@ -14,19 +14,20 @@ python codex_api_provider_switch.py --tray-smoke-test
 ## 打包
 
 ```powershell
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.5.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.5.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.6.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.6.iss"
 .\installer\verify_install.ps1
 ```
 
-打包配置会内置 `assets/` 下的 Tabler 衍生窗口图标、第三方许可、重启助手和 GLM `models.json`。安装注入使用独立的 `models-glm.json`，避免污染 GPT 中转的模型目录。单文件产物为 `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.5.exe`，安装包为同目录下的 `Codex Provider Switch-Setup-1.3.5.exe`。安装版支持系统托盘常驻和可选开机后台监控。版本号的运行时事实源为 `provider_switch/constants.py`，Windows 文件版本由 `assets/version_info-1.3.5.txt` 提供。
+打包配置会内置 `assets/` 下的 Tabler 衍生窗口图标、第三方许可、重启助手和 GLM `models.json`。安装注入使用独立的 `models-glm.json`，避免污染 GPT 中转的模型目录。单文件产物为 `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.6.exe`，安装包为同目录下的 `Codex Provider Switch-Setup-1.3.6.exe`。安装版支持系统托盘常驻和可选开机后台监控。版本号的运行时事实源为 `provider_switch/constants.py`，Windows 文件版本由 `assets/version_info-1.3.6.txt` 提供。
 
 1.3.1 修复安装器关闭常驻进程：非静默安装仍会询问是否关闭程序；确认后优先通过本地 IPC 让托盘进程干净退出，旧版本或无响应进程只会按文件过滤强制关闭 `Codex Provider Switch.exe`，不会结束 Codex 或其他应用。
 1.3.2 增强 AP1 `aqyimin.chat` 兼容性：切换 GLM/API2/OpenAI 时隔离 AP1 专用配置，切回时恢复服务级别、模型设置、图像开关和白名单图像头；快照不保存任何 API key。
 1.3.3 修复 AP1 首次导入时误写 `requires_openai_auth = true` 的问题，并在启动时安全迁移旧配置；AP1 始终使用自己的 bearer/API Key。Codex Desktop 的 GPT Image 2 本地生成命令是独立的 OpenAI Platform API 路径，需要单独提供 `OPENAI_API_KEY`，不会读取或代用 AP1/GLM 的 Key。
 1.3.4 将 API1 的 AP1 图像扩展兼容策略严格绑定到 `aqyimin.chat` 主机；API1 改成其他 URL 后完全按 API2 的通用中转策略处理，并清理残留的 AP1 专用字段。监控页移除供应商可用性时间线/条形区域，保留实际请求健康摘要、平均响应时间和 Token 仪表盘。
 1.3.5 修复配置预览及调整保存 TOML 时对 Windows 路径和常见未加引号字符串的兼容性；自动修复可安全识别的格式，无法修复时显示脱敏的行列定位，不会把 bearer/API Key 写入错误提示。
-1.3.1 产物 SHA-256：便携版 `0674EBB245283ED2DD634DA57572C241237826F94664837B68E8BEFD9BDCAABA`；安装包 `4BCF1281A7240B67A631330CA460F4F6A9777B56D69821A71A0EE52C5BCD1B4C`。1.3.2 产物 SHA-256：便携版 `A95C6A2014836ED69D5385ADB3C7A29E855EF43F7BA765CC8F9DF74B7A30EA90`；安装包 `64FA18D555F46C2710C5BA1EF458265265A077D6FB983E48D922EE5EC9147932`。1.3.3 产物 SHA-256：便携版 `E08DCCAB83F6ACFDD545A94BD51FA8A18805AC66F09263856A3F19B65DFB632C`；安装包 `19146F465EB01E6286C0D873FBA96F1428E3DD8CD69B629FB7A2C06895083325`。1.3.4 产物 SHA-256：便携版 `C27678B87C5BFEB1E855C38246E74D8A84323A832A0992A4D67259D94F1C3B9F`；安装包 `8D574E678B99482DC44E0D45C1015B302ED19C81FC2ECE43416536782E2D3112`。1.3.5 产物 SHA-256：便携版 `56CF7CD4308F506F732877F7BD3ABB9040B7C9F8970E9671D8D3E136CC3C2D9A`；安装包 `53BB346516B75A6071D73EE8CDC14D59B41430D9FBBB389D02D49C9479401256`。
+1.3.6 为 API1/API2 默认写入 Fast mode；切换 GLM 时清理 `service_tier` 与 `[features].fast_mode`，保留其它功能开关。aqyimin.chat 的显式 `priority` tier 继续保留。
+1.3.1 产物 SHA-256：便携版 `0674EBB245283ED2DD634DA57572C241237826F94664837B68E8BEFD9BDCAABA`；安装包 `4BCF1281A7240B67A631330CA460F4F6A9777B56D69821A71A0EE52C5BCD1B4C`。1.3.2 产物 SHA-256：便携版 `A95C6A2014836ED69D5385ADB3C7A29E855EF43F7BA765CC8F9DF74B7A30EA90`；安装包 `64FA18D555F46C2710C5BA1EF458265265A077D6FB983E48D922EE5EC9147932`。1.3.3 产物 SHA-256：便携版 `E08DCCAB83F6ACFDD545A94BD51FA8A18805AC66F09263856A3F19B65DFB632C`；安装包 `19146F465EB01E6286C0D873FBA96F1428E3DD8CD69B629FB7A2C06895083325`。1.3.4 产物 SHA-256：便携版 `C27678B87C5BFEB1E855C38246E74D8A84323A832A0992A4D67259D94F1C3B9F`；安装包 `8D574E678B99482DC44E0D45C1015B302ED19C81FC2ECE43416536782E2D3112`。1.3.5 产物 SHA-256：便携版 `56CF7CD4308F506F732877F7BD3ABB9040B7C9F8970E9671D8D3E136CC3C2D9A`；安装包 `53BB346516B75A6071D73EE8CDC14D59B41430D9FBBB389D02D49C9479401256`。1.3.6 产物 SHA-256：便携版 `916C1C766C0CA6C3FC5EC5C88885F20004EEF127CC93949A3E38D575F8C47414`；安装包 `97E1BB6B1905A7715747E53F2BB5BB9CF720593FECE6BB64A72EAB896A2D753E`。
 
 额度查询支持在供应商未使用时单独执行。点击卡片上的“查额度”只调用已保存的额度接口，不切换当前供应商，也不执行模型链路探测；只要有额度地址（或 API 地址）和 Key，即使还没有默认模型也可以查询，API1/API2 会查询配置的 `/v1/usage?days=30`。对于 aqyimin.chat，切回时会恢复 GPT 模型、图像能力相关的原模型目录和推理配置；切换 GLM 时使用独立的 `models-glm.json`。API1 / API2 / GLM 互相切换直接执行，不弹出共存选择。
 

@@ -101,7 +101,8 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual("new-secret", parsed["model_providers"]["cch_gz"]["experimental_bearer_token"])
         self.assertEqual("keep-me", parsed["model_providers"]["cch_gz"]["custom_flag"])
         self.assertTrue(parsed["features"]["steer"])
-        self.assertEqual("default", parsed["service_tier"])
+        self.assertEqual("fast", parsed["service_tier"])
+        self.assertTrue(parsed["features"]["fast_mode"])
         self.assertIsNotNone(backup)
         self.assertEqual(SAMPLE_CONFIG, backup.read_text(encoding="utf-8"))
 
@@ -114,6 +115,28 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertEqual("relay_2", parsed["model_provider"])
         self.assertIn("cch_gz", parsed["model_providers"])
         self.assertIn("relay_2", parsed["model_providers"])
+
+    def test_relay_fast_mode_is_removed_when_switching_to_glm(self) -> None:
+        relay = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://relay.example/v1", "gpt-6-sol"
+        )
+        self.manager.apply_profile(relay, "relay-secret", True, "custom")
+        relay_config = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertEqual("fast", relay_config["service_tier"])
+        self.assertTrue(relay_config["features"]["fast_mode"])
+
+        catalog = self.home / "models-glm.json"
+        catalog.write_text(
+            '{"models": [{"slug": "glm-5.3-flash", "display_name": "GLM", "context_window": 1000}]}',
+            encoding="utf-8",
+        )
+        glm = ProviderProfile(
+            "glm", "GLM", "glm", "ZAI", "https://open.bigmodel.cn/api/v1", "glm-5.3-flash"
+        )
+        self.manager.apply_profile(glm, "glm-secret", True, "custom", catalog)
+        glm_config = tomllib.loads((self.home / "config.toml").read_text(encoding="utf-8"))
+        self.assertNotIn("service_tier", glm_config)
+        self.assertNotIn("fast_mode", glm_config.get("features", {}))
 
     def test_glm_switch_injects_model_catalog_and_responses_provider(self) -> None:
         catalog = self.home / "models.json"
@@ -314,7 +337,8 @@ class ConfigManagerTests(unittest.TestCase):
         parsed = tomllib.loads(text)
         self.assertNotIn("image_generation", parsed.get("features", {}))
         self.assertNotIn("x-openai-actor-authorization", text)
-        self.assertNotIn("service_tier", parsed)
+        self.assertEqual("fast", parsed["service_tier"])
+        self.assertTrue(parsed["features"]["fast_mode"])
         self.assertTrue(parsed["features"]["steer"])
 
         aqyimin = ProviderProfile(
@@ -366,7 +390,8 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertTrue(provider["requires_openai_auth"])
         self.assertEqual("new-key", provider["experimental_bearer_token"])
         self.assertNotIn("image_generation", parsed.get("features", {}))
-        self.assertNotIn("service_tier", parsed)
+        self.assertEqual("fast", parsed["service_tier"])
+        self.assertTrue(parsed["features"]["fast_mode"])
         self.assertNotIn("x-openai-actor-authorization", provider.get("http_headers", {}))
         self.assertEqual("keep-me", provider["http_headers"]["x-tenant"])
 
