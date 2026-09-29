@@ -9,11 +9,12 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QPushButton
     from codex_api_provider_switch import build_demo_controller
     from provider_switch.qt_ui import ProviderSwitchWindow
 except ImportError:  # pragma: no cover - exercised only on minimal Tk installs
     QApplication = None  # type: ignore[assignment]
+    QPushButton = None  # type: ignore[assignment]
     build_demo_controller = None  # type: ignore[assignment]
     ProviderSwitchWindow = None  # type: ignore[assignment]
 
@@ -61,6 +62,10 @@ class QtSwitchEntryTests(unittest.TestCase):
         self.assertFalse(hasattr(self.window, "_timeline_widget"))
         self.assertFalse(hasattr(self.window, "_timeline_labels"))
         self.assertNotIn("时间线", self.window._monitor_scope_hint.text())
+
+    def test_config_editor_exposes_current_provider_default_button(self) -> None:
+        labels = {button.text() for button in self.window.findChildren(QPushButton)}
+        self.assertIn("恢复当前默认", labels)
 
 
 if __name__ == "__main__":

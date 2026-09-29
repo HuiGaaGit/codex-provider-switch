@@ -330,6 +330,45 @@ class MonitoringTests(unittest.TestCase):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_default_config_text_uses_active_aqyimin_route_without_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            home = root / ".codex"
+            home.mkdir()
+            original = (
+                'model_provider = "cch_gz"\nmodel = "gpt-6-astra"\n\n'
+                '[features]\nsteer = true\n\n'
+                '[model_providers.cch_gz]\nname = "API1"\n'
+                'base_url = "https://www.aqyimin.chat/v1"\nwire_api = "responses"\n'
+                'experimental_bearer_token = "redacted"\ncustom_flag = "remove-me"\n'
+            )
+            config_path = home / "config.toml"
+            config_path.write_text(original, encoding="utf-8")
+            settings = AppSettings(
+                codex_home=str(home),
+                setup_complete=True,
+                stable_provider_key="cch_gz",
+                active_profile_id="relay1",
+                auto_restart=False,
+                auto_sync_history=False,
+            )
+            settings.profiles["relay1"].base_url = "https://www.aqyimin.chat/v1"
+            settings.profiles["relay1"].model = "gpt-6-astra"
+            store = SettingsStore(root / "data")
+            store.save(settings, {"relay1": "redacted"})
+            controller = ApplicationController(store)
+            baseline = config_path.read_text(encoding="utf-8")
+
+            text, profile_id, label = controller.default_config_text()
+
+            parsed = tomllib.loads(text)
+            self.assertEqual("relay1", profile_id)
+            self.assertIn("aqyimin AP1", label)
+            self.assertEqual("priority", parsed["service_tier"])
+            self.assertTrue(parsed["features"]["image_generation"])
+            self.assertNotIn("custom_flag", parsed["model_providers"]["cch_gz"])
+            self.assertEqual(baseline, config_path.read_text(encoding="utf-8"))
+
     def test_request_health_uses_current_request_log_without_network_probe(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)

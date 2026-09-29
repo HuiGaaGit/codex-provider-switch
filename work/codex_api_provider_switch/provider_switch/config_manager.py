@@ -285,6 +285,50 @@ def _set_table_key(text: str, table_name: str, key: str, value: str | bool | Non
     return "".join(lines)
 
 
+def _remove_top_level_keys(text: str, keys: tuple[str, ...]) -> str:
+    """Remove active and commented managed keys before rebuilding a default."""
+    lines = text.splitlines(keepends=True)
+    boundary = _first_table_index(lines)
+    matchers = [
+        re.compile(rf"^\s*(?:#\s*)?{re.escape(key)}\s*=") for key in keys
+    ]
+    kept = [
+        line
+        for index, line in enumerate(lines)
+        if index >= boundary or not any(matcher.match(line) for matcher in matchers)
+    ]
+    return "".join(kept)
+
+
+def _remove_table_keys(text: str, table_name: str, keys: tuple[str, ...]) -> str:
+    """Remove active and commented managed keys from one exact table."""
+    lines = text.splitlines(keepends=True)
+    bounds = _table_bounds(lines, table_name)
+    if bounds is None:
+        return text
+    start, end = bounds
+    matchers = [
+        re.compile(rf"^\s*(?:#\s*)?{re.escape(key)}\s*=") for key in keys
+    ]
+    for index in range(end - 1, start, -1):
+        if any(matcher.match(lines[index]) for matcher in matchers):
+            del lines[index]
+    return "".join(lines)
+
+
+def _remove_table(text: str, table_name: str) -> str:
+    """Remove one exact TOML table while leaving every other table intact."""
+    lines = text.splitlines(keepends=True)
+    bounds = _table_bounds(lines, table_name)
+    if bounds is None:
+        return text
+    start, end = bounds
+    del lines[start:end]
+    while start < len(lines) and not lines[start].strip():
+        del lines[start]
+    return "".join(lines)
+
+
 def _table_bounds(lines: list[str], table_name: str) -> tuple[int, int] | None:
     start = -1
     for index, line in enumerate(lines):
@@ -957,6 +1001,111 @@ class ConfigManager:
             )
         for key in clear_other_keys or []:
             updated = _remove_provider_auth_fields(updated, key, remove_headers=True)
+        self._validate_rendered(updated, provider_key)
+        return updated, provider_key
+
+    def render_default_profile(
+        self,
+        profile: ProviderProfile,
+        api_key: str,
+        preserve_provider_key: bool,
+        stable_provider_key: str,
+        catalog_path: Path | None = None,
+    ) -> tuple[str, str]:
+        """Build a clean provider-specific template without writing it.
+
+        Unrelated top-level options, plugins, MCP servers, project trust and
+        other provider registrations remain untouched. Only fields managed by
+        this application and the active provider table are rebuilt.
+        """
+        original, _ = self.read()
+        try:
+            parsed = tomllib.loads(original)
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigError(f"config.toml 语法错误：{exc}") from exc
+
+        provider_key = (
+            stable_provider_key
+            if profile.kind != "official" and preserve_provider_key
+            else profile.provider_key
+        )
+        current_provider_key = str(parsed.get("model_provider", "")).strip()
+        updated = _remove_top_level_keys(
+            original,
+            (
+                "model_provider",
+                "model",
+                "model_catalog_json",
+                "model_reasoning_effort",
+                "service_tier",
+            ),
+        )
+        updated = _remove_table_keys(
+            updated, "features", ("fast_mode", "image_generation")
+        )
+        if profile.kind != "official":
+            for key in {current_provider_key, provider_key} - {""}:
+                updated = _remove_table(updated, f"model_providers.{key}")
+
+        if profile.kind == "official":
+            if profile.model:
+                updated = _set_top_level(updated, "model", profile.model)
+            try:
+                restored = tomllib.loads(updated)
+            except tomllib.TOMLDecodeError as exc:
+                raise ConfigError(f"默认 OpenAI 配置无效：{exc}") from exc
+            if restored.get("model_provider"):
+                raise ConfigError("默认 OpenAI 配置仍包含自定义 model_provider。")
+            return updated, "openai"
+
+        if not profile.base_url:
+            raise ConfigError(f"{profile.display_name} 尚未配置 API 地址。")
+        if not profile.model:
+            raise ConfigError(f"{profile.display_name} 尚未配置模型。")
+        if not api_key:
+            raise ConfigError(f"{profile.display_name} 尚未配置 API Key。")
+
+        target_aqyimin = self.uses_aqyimin_compatibility(profile)
+        updated = _set_top_level(updated, "model_provider", provider_key)
+        updated = _set_top_level(updated, "model", profile.model)
+        if profile.kind == "glm":
+            if catalog_path is None:
+                raise ConfigError("GLM 默认配置缺少 models-glm.json 路径。")
+            updated = _set_top_level(updated, "model_reasoning_effort", "max")
+            updated = _set_top_level(
+                updated, "model_catalog_json", catalog_path.resolve(strict=False).as_posix()
+            )
+        elif target_aqyimin:
+            # AP1's supplied reference config uses priority plus the local
+            # image extension. Fast mode remains explicitly enabled as in the
+            # normal API1/API2 route policy.
+            updated = _set_top_level(updated, "model_reasoning_effort", "max")
+            updated = _set_top_level(updated, "service_tier", "priority")
+            updated = _set_table_key(updated, "features", "fast_mode", True)
+            updated = _set_table_key(updated, "features", "image_generation", True)
+        else:
+            updated = _set_top_level(updated, "service_tier", "fast")
+            updated = _set_table_key(updated, "features", "fast_mode", True)
+
+        updated = _upsert_provider_table(
+            updated,
+            provider_key,
+            {
+                "name": profile.display_name,
+                "base_url": profile.base_url,
+                "wire_api": "responses",
+                "requires_openai_auth": (
+                    False if target_aqyimin else profile.requires_openai_auth
+                ),
+                "experimental_bearer_token": api_key,
+            },
+        )
+        if target_aqyimin:
+            updated = _merge_provider_headers(
+                updated,
+                provider_key,
+                {"x-openai-actor-authorization": "local-image-extension"},
+            )
         self._validate_rendered(updated, provider_key)
         return updated, provider_key
 

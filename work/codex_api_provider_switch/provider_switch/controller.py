@@ -121,6 +121,36 @@ class ApplicationController:
         self.save()
         return snapshot
 
+    def default_config_text(self) -> tuple[str, str, str]:
+        """Return the safe default template for the currently active route."""
+        snapshot = self.current_snapshot()
+        profile_id = self.detect_active_profile()
+        if profile_id not in self.settings.profiles:
+            raise ConfigError(
+                "无法识别当前供应商，请先校验 config.toml 或切换到已配置的供应商。"
+            )
+        profile = self.settings.profiles[profile_id]
+        api_key = self.credentials.get(profile_id, "").strip()
+        if profile.kind != "official" and not api_key:
+            provider = snapshot.providers.get(snapshot.model_provider, {})
+            token = provider.get("experimental_bearer_token", "") if isinstance(provider, dict) else ""
+            if isinstance(token, str):
+                api_key = token.strip()
+        catalog_path = self.catalog.target_path if profile.kind == "glm" else None
+        text, _ = self.config.render_default_profile(
+            profile,
+            api_key,
+            self.settings.preserve_provider_key,
+            self.settings.stable_provider_key,
+            catalog_path,
+        )
+        label = (
+            f"{profile.display_name} · aqyimin AP1"
+            if ConfigManager.uses_aqyimin_compatibility(profile)
+            else profile.display_name
+        )
+        return text, profile_id, label
+
     def _sync_profiles_from_snapshot(self, snapshot: ConfigSnapshot) -> None:
         if not snapshot.model_provider:
             self.settings.active_profile_id = "openai"

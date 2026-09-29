@@ -1388,6 +1388,7 @@ class ProviderSwitchWindow(QMainWindow):
         config_toolbar.addWidget(self.config_scope_label, 1)
         for label, slot in (
             ("重新读取", self.load_config_from_disk),
+            ("恢复当前默认", self.restore_default_config),
             ("校验 TOML", self.validate_config_editor),
             ("保存并同步供应商", self.save_config_editor),
         ):
@@ -1456,6 +1457,29 @@ class ProviderSwitchWindow(QMainWindow):
             self.config_hint.setText("已读取当前配置；可直接调整，保存后会同步本机供应商档案")
         except Exception as exc:
             QMessageBox.warning(self, "读取失败", str(exc))
+
+    def restore_default_config(self) -> None:
+        """Load the active supplier's clean template into the editor."""
+        try:
+            text, _, label = self.controller.default_config_text()
+        except Exception as exc:
+            QMessageBox.warning(self, "恢复失败", str(exc))
+            return
+        answer = QMessageBox.question(
+            self,
+            "恢复当前供应商默认",
+            f"将载入 {label} 的默认 config.toml 模板，并覆盖编辑器中尚未保存的内容。\n\n"
+            "此操作只修改编辑器，不会立即写入本机；确认后请点击“保存并同步供应商”。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._set_config_text(text)
+        self.config_hint.setText(
+            f"已载入 {label} 默认配置；请检查后点击“保存并同步供应商”写入本机"
+        )
+        self._set_footer(f"已载入 {label} 默认配置（尚未保存）")
 
     def validate_config_editor(self) -> None:
         text = self.config_editor.toPlainText()

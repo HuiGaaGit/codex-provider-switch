@@ -138,6 +138,75 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertNotIn("service_tier", glm_config)
         self.assertNotIn("fast_mode", glm_config.get("features", {}))
 
+    def test_default_template_rebuilds_generic_relay_without_custom_provider_keys(self) -> None:
+        profile = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://relay.example/v1", "gpt-6-sol"
+        )
+        text, provider_key = self.manager.render_default_profile(
+            profile, "relay-secret", True, "cch_gz"
+        )
+        parsed = tomllib.loads(text)
+        provider = parsed["model_providers"][provider_key]
+        self.assertEqual("cch_gz", parsed["model_provider"])
+        self.assertEqual("fast", parsed["service_tier"])
+        self.assertTrue(parsed["features"]["fast_mode"])
+        self.assertTrue(parsed["features"]["steer"])
+        self.assertEqual(
+            {"name", "base_url", "wire_api", "requires_openai_auth", "experimental_bearer_token"},
+            set(provider),
+        )
+        self.assertNotIn("custom_flag", provider)
+        self.assertIn("notify =", text)
+        self.assertEqual(SAMPLE_CONFIG, (self.home / "config.toml").read_text(encoding="utf-8"))
+
+    def test_default_template_rebuilds_aqyimin_ap1_image_defaults(self) -> None:
+        profile = ProviderProfile(
+            "relay1", "API1", "relay", "relay_1", "https://www.aqyimin.chat/v1", "gpt-6-astra"
+        )
+        text, provider_key = self.manager.render_default_profile(
+            profile, "ap1-secret", True, "cch_gz"
+        )
+        parsed = tomllib.loads(text)
+        provider = parsed["model_providers"][provider_key]
+        self.assertEqual("priority", parsed["service_tier"])
+        self.assertEqual("max", parsed["model_reasoning_effort"])
+        self.assertTrue(parsed["features"]["fast_mode"])
+        self.assertTrue(parsed["features"]["image_generation"])
+        self.assertEqual("local-image-extension", provider["http_headers"]["x-openai-actor-authorization"])
+        self.assertFalse(provider["requires_openai_auth"])
+        self.assertNotIn("model_catalog_json", parsed)
+
+    def test_default_template_rebuilds_glm_and_clears_fast_mode(self) -> None:
+        catalog = self.home / "models-glm.json"
+        catalog.write_text('{"models": [{"slug": "glm-5.3-flash"}]}', encoding="utf-8")
+        profile = ProviderProfile(
+            "glm", "GLM", "glm", "ZAI", "https://open.bigmodel.cn/api/v1", "glm-5.3-flash"
+        )
+        text, provider_key = self.manager.render_default_profile(
+            profile, "glm-secret", True, "cch_gz", catalog
+        )
+        parsed = tomllib.loads(text)
+        provider = parsed["model_providers"][provider_key]
+        self.assertEqual(catalog.resolve().as_posix(), parsed["model_catalog_json"])
+        self.assertEqual("max", parsed["model_reasoning_effort"])
+        self.assertNotIn("service_tier", parsed)
+        self.assertNotIn("fast_mode", parsed.get("features", {}))
+        self.assertNotIn("image_generation", parsed.get("features", {}))
+        self.assertNotIn("http_headers", provider)
+
+    def test_default_template_for_openai_keeps_other_provider_registrations(self) -> None:
+        profile = ProviderProfile("openai", "OpenAI 直连", "official", "openai", model="gpt-6-sol")
+        text, provider_key = self.manager.render_default_profile(
+            profile, "", True, "cch_gz"
+        )
+        parsed = tomllib.loads(text)
+        self.assertEqual("openai", provider_key)
+        self.assertNotIn("model_provider", parsed)
+        self.assertEqual("gpt-6-sol", parsed["model"])
+        self.assertIn("cch_gz", parsed["model_providers"])
+        self.assertNotIn("service_tier", parsed)
+        self.assertNotIn("fast_mode", parsed.get("features", {}))
+
     def test_glm_switch_injects_model_catalog_and_responses_provider(self) -> None:
         catalog = self.home / "models.json"
         catalog.write_text('{"models": [{"slug": "glm-5.3", "display_name": "glm-5.3", "context_window": 1000}]}', encoding="utf-8")

@@ -2,7 +2,7 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.3.6`
+当前交付版本：`1.3.7`
 
 ## 日常使用
 
@@ -43,7 +43,7 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 - `glm-5.3-flash`（默认模型；内置目录声明 `text + image`，切换后可直接使用图片输入）
 - `glm-5-turbo`
 
-“配置预览及调整”功能区分为上下两部分。上半部分是 GLM `models.json`：支持读取本机文件、恢复内置版本、直接编辑、JSON/模型字段校验和一键保存注入。下半部分是当前 `config.toml`：支持读取、TOML 校验、人工调整和保存；保存时会备份原文件，并把当前供应商名称、地址、模型、认证策略和 bearer token 同步回本机供应商档案，后续一键切换会保留这些兼容调整。
+“配置预览及调整”功能区分为上下两部分。上半部分是 GLM `models.json`：支持读取本机文件、恢复内置版本、直接编辑、JSON/模型字段校验和一键保存注入。下半部分是当前 `config.toml`：支持读取、按当前供应商恢复默认模板、TOML 校验、人工调整和保存；恢复默认只载入编辑器，确认后再保存。保存时会备份原文件，并把当前供应商名称、地址、模型、认证策略和 bearer token 同步回本机供应商档案，后续一键切换会保留这些兼容调整。
 
 默认 GLM 配置为：
 
@@ -91,10 +91,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.3.6.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.6.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.6.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.6.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.7.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.7.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.7.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.7.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -105,16 +105,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.6.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.6.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.7.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.7.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.6.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.6.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.6.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.7.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.7.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.7.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
@@ -257,6 +257,11 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 
 - API1/API2 切换时默认写入 `service_tier = "fast"` 和 `[features].fast_mode = true`。
 - 切换到 GLM 时清理 Fast mode 字段，但保留其它 `[features]` 配置；API1 的 aqyimin 显式 `priority` tier 继续兼容保留。
+
+## 1.3.7 变更
+
+- “配置预览及调整”增加“恢复当前默认”：按当前实际路由分别生成普通 API、aqyimin AP1、GLM 或 OpenAI 直连模板，先载入编辑器预览，确认后再保存；不覆盖无关配置和本地加密 Key。
+- 1.3.7 产物 SHA-256：便携版 `06E9CC0EF36C39599A02B3D930E65D88C74EAE1C6702CBA182043710A816224E`；安装包 `82ACBE1619EAE5F333A57200AD645BE6666C06607B1C7735BF4B0B7735949687`。
 - 1.3.6 产物 SHA-256：便携版 `916C1C766C0CA6C3FC5EC5C88885F20004EEF127CC93949A3E38D575F8C47414`；安装包 `97E1BB6B1905A7715747E53F2BB5BB9CF720593FECE6BB64A72EAB896A2D753E`。
 
 ## 1.3.0 变更
