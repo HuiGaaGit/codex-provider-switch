@@ -2,7 +2,9 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.3.7`
+当前交付版本：`1.3.8`
+
+1.3.8 修复官方直连操作：新增“登录并切换直连”动作，一次完成 OpenAI 官方账号登录、切换官方路由和断开所有第三方 API 当前连接；总览页在官方直连时提供“断开所有 API”入口。断开逻辑会读取当前 `config.toml` 中的全部供应商表，兼容旧版本或手工添加的 provider 标签，并保留本地加密 Key、地址和模型。
 
 ## 日常使用
 
@@ -30,7 +32,7 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 - 保留官方登录态与 GLM 不冲突：GLM 始终写入 `requires_openai_auth = false` 并使用自己的 bearer token；官方凭据缓存保持不变，切回 OpenAI 时继续使用。
 - “保持同一 provider 标签”默认开启。第三方供应商切换时复用首次读取到的 provider key（本机当前为 `cch_gz`），避免新会话按多个标签分裂。
 - OpenAI 直连不会删除第三方 provider 注册段，因此已有历史会话仍能解析原 provider。
-- “部署与登录”可运行 `codex login status`、启动 `codex login` 或执行 `codex logout`。选择不保留官方登录态后，软件会清除当前 Codex Home 的 `auth.json`，并把中转切换为独立 API Key 模式；重新登录不会改动中转 1 / 2 的地址与 Key。
+- “部署与登录”可运行 `codex login status`、启动 `codex login` 或执行 `codex logout`。新增“登录并切换直连”可一次完成官方登录、官方路由启用和第三方 API 当前连接断开；选择不保留官方登录态后，软件会清除当前 Codex Home 的 `auth.json`，并把中转切换为独立 API Key 模式；重新登录不会改动中转 1 / 2 的地址与 Key。
 - 每次写入前在 `.codex\provider-switch-backups\` 创建时间戳备份；写入后重新解析验证，失败时尝试自动回滚。
 - 如果 Threadripper 可用，切换后自动同步并校验会话索引。工具页也可随时手动同步。
 - 自动重启默认开启。重启助手只结束 Codex 应用进程，不再使用进程树终止；配置始终先保存、验证，再尝试重启，因此从 Codex 内打开本工具时也不会被一同关闭。
@@ -91,10 +93,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.3.7.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.7.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.7.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.7.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.8.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.8.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.8.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.8.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -105,16 +107,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.7.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.7.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.8.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.8.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.7.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.7.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.7.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.8.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.8.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.8.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
@@ -263,6 +265,13 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 - “配置预览及调整”增加“恢复当前默认”：按当前实际路由分别生成普通 API、aqyimin AP1、GLM 或 OpenAI 直连模板，先载入编辑器预览，确认后再保存；不覆盖无关配置和本地加密 Key。
 - 1.3.7 产物 SHA-256：便携版 `06E9CC0EF36C39599A02B3D930E65D88C74EAE1C6702CBA182043710A816224E`；安装包 `82ACBE1619EAE5F333A57200AD645BE6666C06607B1C7735BF4B0B7735949687`。
 - 1.3.6 产物 SHA-256：便携版 `916C1C766C0CA6C3FC5EC5C88885F20004EEF127CC93949A3E38D575F8C47414`；安装包 `97E1BB6B1905A7715747E53F2BB5BB9CF720593FECE6BB64A72EAB896A2D753E`。
+
+## 1.3.8 变更
+
+- “部署与登录”新增“登录并切换直连”，一次完成 OpenAI 官方账号登录、官方路由启用和所有第三方 API 当前连接断开；API 地址、模型和本地加密 Key 保留。
+- 总览页新增断开入口：官方直连时清理所有第三方 provider 的 bearer/header 连接字段，其他路由时只清理其余 provider；动态读取当前 `config.toml`，兼容旧版本和手工添加的标签。
+- Codex CLI 发现兼容 Windows npm shim 和 Explorer 启动时缺少 PATH 的常见位置。
+- 1.3.8 产物 SHA-256：便携版 `C247576A0C8793E89164653BB1D5C5E378A1DCBA55633FD2B5F8BD1CD92AA7CB`；安装包 `5589783A294F4EB1FF21FCD31FD1A02A82D1CC9B12EE976B111981ECE4771433`。
 
 ## 1.3.0 变更
 

@@ -272,6 +272,43 @@ class DeploymentPolicyTests(unittest.TestCase):
             self.assertNotIn("experimental_bearer_token", provider)
             self.assertEqual("https://open.bigmodel.cn/api/v1", provider["base_url"])
 
+    def test_openai_switch_clears_manual_provider_tables_not_in_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            controller = build_controller(Path(name), active_glm=True)
+            config_path = controller.codex_home / "config.toml"
+            config_path.write_text(
+                config_path.read_text(encoding="utf-8")
+                + '\n[model_providers.legacy_api]\n'
+                + 'name = "Legacy"\nbase_url = "https://legacy.example/v1"\n'
+                + 'experimental_bearer_token = "legacy-key"\n',
+                encoding="utf-8",
+            )
+            controller.auth = FakeAuthManager(controller.codex_home, logged_in=True)  # type: ignore[assignment]
+            controller._set_auth_retention(True)
+
+            controller.switch_profile("openai", disconnect_others=True)
+
+            parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
+            self.assertNotIn("experimental_bearer_token", parsed["model_providers"]["cch_gz"])
+            self.assertNotIn("experimental_bearer_token", parsed["model_providers"]["legacy_api"])
+            self.assertEqual("https://legacy.example/v1", parsed["model_providers"]["legacy_api"]["base_url"])
+
+    def test_login_and_switch_official_disconnects_api_connections(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            controller = build_controller(Path(name), active_glm=True)
+            fake_auth = FakeAuthManager(controller.codex_home, logged_in=False)
+            controller.auth = fake_auth  # type: ignore[assignment]
+
+            result, status = controller.login_and_switch_official()
+
+            parsed = tomllib.loads((controller.codex_home / "config.toml").read_text(encoding="utf-8"))
+            self.assertEqual("openai", result.profile_id)
+            self.assertTrue(status.official_account_logged_in)
+            self.assertNotIn("model_provider", parsed)
+            self.assertNotIn("experimental_bearer_token", parsed["model_providers"]["cch_gz"])
+            self.assertTrue(controller.settings.retain_official_auth)
+            self.assertEqual(1, fake_auth.login_calls)
+
     def test_openai_switch_keep_alive_preserves_glm_bearer(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             controller = build_controller(Path(name), active_glm=True)

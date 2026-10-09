@@ -69,7 +69,44 @@ class CodexAuthManager:
         self.auth_path = self.codex_home / "auth.json"
         self._runner = runner
         self._popen = popen_factory
-        self.command = command or shutil.which("codex") or "codex"
+        self.command = command or self._find_command() or "codex"
+
+    @staticmethod
+    def _find_command() -> str | None:
+        """Find the Codex CLI even when the packaged app has a reduced PATH.
+
+        The desktop build is often launched from Explorer, where npm's global
+        bin directory is not present in the inherited PATH.  ``codex.cmd`` is
+        the normal Windows shim, so include the common per-user locations and
+        let ``_argv`` wrap it through ``cmd.exe`` when needed.
+        """
+        candidates = ["codex", "codex.cmd", "codex.exe"]
+        appdata = os.environ.get("APPDATA", "")
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if appdata:
+            candidates.append(str(Path(appdata) / "npm" / "codex.cmd"))
+        if local_app_data:
+            candidates.extend(
+                [
+                    str(Path(local_app_data) / "npm" / "codex.cmd"),
+                    str(Path(local_app_data) / "Programs" / "codex" / "codex.exe"),
+                ]
+            )
+        for candidate in candidates:
+            found = shutil.which(candidate)
+            if found:
+                return found
+            path = Path(candidate).expanduser()
+            if path.is_file():
+                return str(path)
+        return None
+
+    def _argv(self, *args: str) -> list[str]:
+        """Build a subprocess argv that works for exe and Windows shims."""
+        command = str(self.command)
+        if os.name == "nt" and Path(command).suffix.casefold() in {".cmd", ".bat"}:
+            return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", command, *args]
+        return [command, *args]
 
     def _environment(self) -> dict[str, str]:
         env = os.environ.copy()
@@ -80,7 +117,7 @@ class CodexAuthManager:
         exists = self.auth_path.exists()
         try:
             result = self._runner(
-                [self.command, "login", "status"],
+                self._argv("login", "status"),
                 capture_output=True,
                 text=True,
                 timeout=20,
@@ -106,7 +143,7 @@ class CodexAuthManager:
     def logout(self) -> AuthStatus:
         try:
             result = self._runner(
-                [self.command, "logout"],
+                self._argv("logout"),
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -134,7 +171,7 @@ class CodexAuthManager:
     def login_interactive(self) -> AuthStatus:
         try:
             process = self._popen(
-                [self.command, "login"],
+                self._argv("login"),
                 env=self._environment(),
                 creationflags=_login_flags(),
             )

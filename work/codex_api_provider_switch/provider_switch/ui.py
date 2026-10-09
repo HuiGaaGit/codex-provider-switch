@@ -424,7 +424,11 @@ class ProviderSwitchApp(tk.Tk):
         page = self._new_page("dashboard")
         header = self._page_header(page, "供应商总览", "一键切换、链路健康、额度与本机 Token 使用情况")
         self.dashboard_refresh_button = make_button(header, "立即刷新", self.refresh_monitoring)
-        self.dashboard_refresh_button.grid(row=0, column=1, rowspan=2, sticky="e")
+        self.dashboard_disconnect_button = make_button(
+            header, "断开 API", self.confirm_disconnect_others, danger=True
+        )
+        self.dashboard_disconnect_button.grid(row=0, column=1, rowspan=2, padx=(0, 8), sticky="e")
+        self.dashboard_refresh_button.grid(row=0, column=2, rowspan=2, sticky="e")
         route = tk.Frame(page, background=COLORS["surface"], padx=18, pady=14)
         route.grid(row=1, column=0, sticky="ew", pady=(0, 16))
         route.columnconfigure(1, weight=1)
@@ -963,6 +967,13 @@ class ProviderSwitchApp(tk.Tk):
             auth_actions, "登录官方账号", self.login_official_ui, primary=True
         )
         self.auth_login_button.pack(side="left", padx=(0, 8))
+        self.auth_direct_button = make_button(
+            auth_actions,
+            "登录并切换直连",
+            self.login_and_switch_official_ui,
+            primary=True,
+        )
+        self.auth_direct_button.pack(side="left", padx=(0, 8))
         self.auth_logout_button = make_button(
             auth_actions, "清空登录态", self.clear_official_auth_ui, danger=True
         )
@@ -1031,6 +1042,11 @@ class ProviderSwitchApp(tk.Tk):
         self.auth_login_button.configure(
             text="启用官方直连" if status.official_account_logged_in else "登录官方账号"
         )
+        self.auth_direct_button.configure(
+            state="normal"
+            if (not status.official_account_logged_in or not self.controller.openai_available(status))
+            else "disabled"
+        )
         self.auth_logout_button.configure(
             state="normal"
             if status.official_account_logged_in or status.auth_file_exists
@@ -1075,6 +1091,61 @@ class ProviderSwitchApp(tk.Tk):
                     progress=lambda message: self.event_queue.put(("operation_progress", message))
                 )
                 self.event_queue.put(("auth_login_done", result))
+            except Exception as exc:
+                self.event_queue.put(("operation_failed", exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def login_and_switch_official_ui(self) -> None:
+        if self.busy:
+            return
+        if not messagebox.askyesno(
+            APP_NAME,
+            "将登录 OpenAI 官方账号，切换到官方直连，并断开所有 API 供应商的当前连接。\n"
+            "本地保存的 API Key、地址和模型不会删除。\n\n继续吗？",
+            parent=self,
+        ):
+            return
+        self._set_busy(True, "正在登录并切换到 OpenAI 官方直连")
+
+        def worker() -> None:
+            try:
+                result = self.controller.login_and_switch_official(
+                    progress=lambda message: self.event_queue.put(("operation_progress", message))
+                )
+                self.event_queue.put(("auth_direct_done", result))
+            except Exception as exc:
+                self.event_queue.put(("operation_failed", exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def confirm_disconnect_others(self) -> None:
+        if self.busy:
+            return
+        try:
+            active_id = self.controller.detect_active_profile()
+        except Exception:
+            active_id = ""
+        if active_id == "openai":
+            prompt = (
+                "将清除所有第三方供应商的当前 bearer 连接，保留地址、模型和本地 Key。\n"
+                "当前为 OpenAI 官方直连，断开后仍保持官方账号登录。\n\n继续吗？"
+            )
+        else:
+            prompt = (
+                "将清除其他供应商的当前 bearer 连接，保留地址、模型和本地 Key，"
+                "仅保留当前供应商连接。\n\n继续吗？"
+            )
+        if not messagebox.askyesno(APP_NAME, prompt, parent=self):
+            return
+        self._set_busy(True, "正在断开 API 供应商")
+
+        def worker() -> None:
+            try:
+                result = self.controller.disconnect_other_providers(
+                    progress=lambda message: self.event_queue.put(("operation_progress", message))
+                )
+                self.event_queue.put(("disconnect_done", result))
             except Exception as exc:
                 self.event_queue.put(("operation_failed", exc))
 
@@ -1268,6 +1339,10 @@ class ProviderSwitchApp(tk.Tk):
         self.active_route_var.set(active_profile.display_name if active_profile else "未识别的供应商")
         provider_label = snapshot.model_provider or "openai"
         self.route_detail_var.set(f"provider: {provider_label}")
+        if hasattr(self, "dashboard_disconnect_button"):
+            self.dashboard_disconnect_button.configure(
+                text="断开所有 API" if active_id == "openai" else "断开其他 API"
+            )
         for profile_id, card in self.provider_cards.items():
             profile = self.controller.settings.profiles[profile_id]
             is_active = profile_id == active_id
@@ -1387,9 +1462,12 @@ class ProviderSwitchApp(tk.Tk):
         self.provider_save_button.configure(state=state)
         self.provider_test_button.configure(state=state)
         self.threadripper_install_button.configure(state=state)
+        if hasattr(self, "dashboard_disconnect_button"):
+            self.dashboard_disconnect_button.configure(state=state)
         if hasattr(self, "auth_check_button"):
             self.auth_check_button.configure(state=state)
             self.auth_login_button.configure(state=state)
+            self.auth_direct_button.configure(state=state)
             self.auth_logout_button.configure(state=state)
         if busy:
             self.threadripper_sync_button.configure(state="disabled")
@@ -1464,6 +1542,25 @@ class ProviderSwitchApp(tk.Tk):
                     self.deployment_status_var.set("官方登录已启用，OpenAI 直连可切换")
                     self.refresh_all(local_only=True)
                     messagebox.showinfo(APP_NAME, "官方登录已启用。", parent=self)
+                elif event == "auth_direct_done":
+                    _, status = payload  # type: ignore[misc]
+                    self.auth_status_data = status
+                    self._set_busy(False)
+                    self.deployment_status_var.set("已启用 OpenAI 官方直连，其他 API 当前连接已断开")
+                    self.refresh_all(local_only=True)
+                    self.refresh_monitoring()
+                    messagebox.showinfo(
+                        APP_NAME,
+                        "已切换到 OpenAI 官方账号，其他 API 供应商的当前连接已断开。",
+                        parent=self,
+                    )
+                elif event == "disconnect_done":
+                    result = payload  # type: ignore[assignment]
+                    self._set_busy(False)
+                    self.refresh_all(local_only=True)
+                    details = "\n".join(result.warnings)
+                    self.footer_var.set("API 供应商连接已断开")
+                    messagebox.showinfo(APP_NAME, details or "API 供应商连接已断开。", parent=self)
                 elif event == "auth_logout_done":
                     _, status = payload  # type: ignore[misc]
                     self.auth_status_data = status

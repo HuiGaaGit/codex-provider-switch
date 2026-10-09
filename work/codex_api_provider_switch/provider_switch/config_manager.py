@@ -1171,9 +1171,22 @@ class ConfigManager:
             updated = original
             for key in keys:
                 stripped = _remove_provider_auth_fields(updated, key, remove_headers=True)
-                if stripped != updated:
+                # A retained official session must never become the implicit
+                # credential for a provider that the user just disconnected.
+                # Keep the provider table and its non-secret options, but
+                # explicitly disable official auth until the next switch
+                # writes that provider's intended policy again.
+                if _table_bounds(
+                    stripped.splitlines(keepends=True), f"model_providers.{key}"
+                ) is not None:
+                    disabled = _upsert_provider_table(
+                        stripped, key, {"requires_openai_auth": False}
+                    )
+                else:
+                    disabled = stripped
+                if disabled != updated:
                     cleared.append(key)
-                updated = stripped
+                updated = disabled
             if updated == original:
                 return None, []
             backup = self._create_backup()

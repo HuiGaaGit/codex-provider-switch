@@ -66,6 +66,8 @@ class QtSwitchEntryTests(unittest.TestCase):
     def test_config_editor_exposes_current_provider_default_button(self) -> None:
         labels = {button.text() for button in self.window.findChildren(QPushButton)}
         self.assertIn("恢复当前默认", labels)
+        self.assertIn("登录并切换直连", labels)
+        self.assertIn("断开其他 API 供应商", labels)
 
 
 if __name__ == "__main__":

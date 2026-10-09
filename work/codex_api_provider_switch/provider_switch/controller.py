@@ -277,6 +277,29 @@ class ApplicationController:
         self.save()
         return switched, status
 
+    def login_and_switch_official(
+        self, progress: ProgressCallback | None = None
+    ) -> tuple[OperationResult, AuthStatus]:
+        """Log into the official account and make it the active route.
+
+        This is the explicit one-click path for users who want OpenAI direct
+        mode with all third-party API connections disconnected.  API keys stay
+        in the encrypted local vault; only live bearer/header fields are
+        removed from provider tables.  A normal ``restore_official_login``
+        remains available when the user only wants to restore the login state.
+        """
+        status = self.auth.status()
+        if not status.official_account_logged_in:
+            if progress:
+                progress("请在新窗口和浏览器中完成 OpenAI 登录")
+            status = self.auth.login_interactive()
+        self._set_auth_retention(True)
+        self.save()
+        if progress:
+            progress("正在切换到 OpenAI 官方直连并断开所有 API 供应商")
+        result = self.switch_profile("openai", progress, disconnect_others=True)
+        return result, self.auth.status()
+
     def clear_official_login(
         self, progress: ProgressCallback | None = None
     ) -> tuple[OperationResult | None, AuthStatus]:
@@ -349,6 +372,15 @@ class ApplicationController:
                 keys.add(profile.provider_key)
         if self.settings.stable_provider_key:
             keys.add(self.settings.stable_provider_key)
+        # Manual edits and older releases can leave provider tables whose
+        # labels are absent from settings.json.  Read the live config too so
+        # disconnecting APIs cannot silently miss those tables.
+        try:
+            keys.update(self.current_snapshot().providers.keys())
+        except (ConfigError, OSError, ValueError):
+            pass
+        keys.discard("openai")
+        keys.discard("official")
         return sorted(keys - exclude)
 
     def _target_provider_key(self, profile: ProviderProfile) -> str:
@@ -456,7 +488,12 @@ class ApplicationController:
             return result
         profile = self.settings.profiles.get(active)
         active_key = self._target_provider_key(profile) if profile is not None and profile.kind != "official" else None
-        keys = self._managed_provider_keys({active_key} if active_key else set())
+        try:
+            current_key = self.current_snapshot().model_provider.strip()
+        except (ConfigError, OSError, ValueError):
+            current_key = ""
+        keep_keys = {key for key in (active_key, current_key) if key}
+        keys = self._managed_provider_keys(keep_keys)
         result = OperationResult(profile_id=active, provider_key=active_key or "openai")
         if not keys:
             result.warnings.append("没有其他已配置的 API 供应商需要断开。")

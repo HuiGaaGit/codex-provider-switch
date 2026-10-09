@@ -1662,12 +1662,16 @@ class ProviderSwitchWindow(QMainWindow):
         self.auth_login_button = QPushButton("登录 / 恢复官方账号")
         self.auth_login_button.setProperty("kind", "primary")
         self.auth_login_button.clicked.connect(self.login_official_ui)
+        self.auth_direct_button = QPushButton("登录并切换直连")
+        self.auth_direct_button.setToolTip("登录 OpenAI 官方账号，切换到官方直连，并断开所有 API 供应商")
+        self.auth_direct_button.clicked.connect(self.login_and_switch_official_ui)
         self.auth_clear_button = QPushButton("清空官方登录态")
         self.auth_clear_button.setProperty("kind", "danger")
         self.auth_clear_button.clicked.connect(self.clear_official_auth_ui)
         self.auth_check_button = QPushButton("重新检查")
         self.auth_check_button.clicked.connect(self.refresh_auth_status)
         auth_buttons.addWidget(self.auth_login_button)
+        auth_buttons.addWidget(self.auth_direct_button)
         auth_buttons.addWidget(self.auth_clear_button)
         auth_buttons.addWidget(self.auth_check_button)
         auth_buttons.addStretch(1)
@@ -1761,6 +1765,7 @@ class ProviderSwitchWindow(QMainWindow):
         self.auth_status_label.setProperty("tone", tone)
         self.auth_path_label.setText(f"凭据位置：{status.auth_path}（文件存在：{'是' if status.auth_file_exists else '否'}）")
         self.auth_login_button.setEnabled(not status.official_account_logged_in)
+        self.auth_direct_button.setEnabled(not status.official_account_logged_in or not self.controller.openai_available(status))
         self.auth_clear_button.setEnabled(
             status.official_account_logged_in or status.auth_file_exists
         )
@@ -1778,6 +1783,40 @@ class ProviderSwitchWindow(QMainWindow):
             lambda: self.controller.restore_official_login(progress=lambda message: self._queue_status(message)),
             lambda result: self._handle_login_result(result),
             lambda exc: self._handle_auth_operation_error(exc),
+        )
+
+    def login_and_switch_official_ui(self) -> None:
+        """One-click official login, direct switch, and API disconnection."""
+        answer = QMessageBox.question(
+            self,
+            "启用 OpenAI 官方直连",
+            "将登录 OpenAI 官方账号，切换到官方直连，并断开所有 API 供应商的当前连接。\n"
+            "本地保存的 API Key、地址和模型不会删除。是否继续？",
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._set_busy(True, "正在登录并切换到 OpenAI 官方直连")
+        self.auth_direct_button.setEnabled(False)
+        self._run_job(
+            lambda: self.controller.login_and_switch_official(
+                progress=lambda message: self._queue_status(message)
+            ),
+            lambda result: self._handle_direct_login_result(result),
+            lambda exc: self._handle_auth_operation_error(exc),
+        )
+
+    def _handle_direct_login_result(
+        self, result: tuple[OperationResult, AuthStatus]
+    ) -> None:
+        self._set_busy(False, "已启用 OpenAI 官方直连")
+        self._handle_auth_status(result[1])
+        self.refresh_all(local_only=True)
+        QTimer.singleShot(400, self.refresh_monitoring)
+        QMessageBox.information(
+            self,
+            "官方直连已启用",
+            "已切换到 OpenAI 官方账号，其他 API 供应商的当前连接已断开。\n"
+            "如需恢复中转，可直接点击 API1、API2 或 GLM。",
         )
 
     def _handle_login_result(self, result: tuple[OperationResult | None, AuthStatus]) -> None:
@@ -1811,6 +1850,7 @@ class ProviderSwitchWindow(QMainWindow):
     def _handle_auth_operation_error(self, exc: BaseException) -> None:
         self._set_busy(False, "登录态操作失败")
         self.auth_login_button.setEnabled(True)
+        self.auth_direct_button.setEnabled(True)
         self.auth_clear_button.setEnabled(True)
         QMessageBox.warning(self, "登录态操作失败", str(exc))
 
@@ -1978,6 +2018,12 @@ class ProviderSwitchWindow(QMainWindow):
         if status:
             self._set_footer(status)
         self.refresh_button.setEnabled(self._busy_count == 0)
+        if hasattr(self, "auth_login_button"):
+            enabled = self._busy_count == 0
+            self.auth_login_button.setEnabled(enabled)
+            self.auth_direct_button.setEnabled(enabled)
+            self.auth_clear_button.setEnabled(enabled)
+            self.auth_check_button.setEnabled(enabled)
         if self._busy_count:
             self.active_header.set_tone("warning", "处理中")
         else:
@@ -2046,6 +2092,17 @@ class ProviderSwitchWindow(QMainWindow):
             self.dashboard_summary.setText(
                 f"当前路由：{active or 'unknown'}  ·  provider 标签：{snapshot.model_provider or '官方默认'}  ·  模型：{snapshot.model or 'Codex 默认'}"
             )
+            if hasattr(self, "disconnect_others_button"):
+                if active == "openai":
+                    self.disconnect_others_button.setText("断开所有 API 供应商")
+                    self.disconnect_others_button.setToolTip(
+                        "清除所有第三方供应商的当前 bearer 连接，保留地址、模型和本地 Key"
+                    )
+                else:
+                    self.disconnect_others_button.setText("断开其他 API 供应商")
+                    self.disconnect_others_button.setToolTip(
+                        "清除其他供应商的当前 bearer 连接，仅保留当前供应商"
+                    )
             for profile_id, card in self.provider_cards.items():
                 profile = self.controller.settings.profiles[profile_id]
                 is_active = profile_id == active
@@ -2352,11 +2409,21 @@ class ProviderSwitchWindow(QMainWindow):
         QMessageBox.warning(self, "切换失败", str(exc))
 
     def confirm_disconnect_others(self) -> None:
+        try:
+            active_id = self.controller.detect_active_profile()
+        except Exception:
+            active_id = ""
+        openai_active = active_id == "openai"
         box = QMessageBox(self)
         box.setWindowTitle("断开其他 API")
         box.setText(
-            "将清除配置中其他供应商的 bearer 连接字段（保留地址和模型，Key 仍保存在本机），\n"
-            "仅保留当前供应商的连接。确定继续？"
+            (
+                "将清除配置中所有第三方供应商的 bearer 连接字段（保留地址和模型，Key 仍保存在本机）。\n"
+                "当前为 OpenAI 官方直连，断开后仍保持官方账号登录。确定继续？"
+                if openai_active
+                else "将清除配置中其他供应商的 bearer 连接字段（保留地址和模型，Key 仍保存在本机），\n"
+                "仅保留当前供应商的连接。确定继续？"
+            )
         )
         confirm = box.addButton("断开", QMessageBox.YesRole)
         box.addButton("取消", QMessageBox.RejectRole)
