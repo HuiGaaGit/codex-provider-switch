@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     from PySide6.QtWidgets import QApplication, QPushButton
     from codex_api_provider_switch import build_demo_controller
+    from provider_switch.auth_manager import AuthStatus
     from provider_switch.qt_ui import ProviderSwitchWindow
 except ImportError:  # pragma: no cover - exercised only on minimal Tk installs
     QApplication = None  # type: ignore[assignment]
@@ -68,6 +69,26 @@ class QtSwitchEntryTests(unittest.TestCase):
         self.assertIn("恢复当前默认", labels)
         self.assertIn("登录并切换直连", labels)
         self.assertIn("断开其他 API 供应商", labels)
+
+    def test_direct_login_button_recovers_after_monitor_busy_state(self) -> None:
+        self.controller.settings.retain_official_auth = False
+        self.window.cached_auth = AuthStatus(
+            "chatgpt", True, self.controller.codex_home / "auth.json"
+        )
+        self.window._busy_count = 1
+        self.window._set_busy(False)
+        self.assertTrue(self.window.auth_direct_button.isEnabled())
+
+    def test_chatgpt_login_state_is_distinguished_from_active_route(self) -> None:
+        self.controller.settings.retain_official_auth = False
+        self.controller.detect_active_profile = Mock(return_value="relay1")
+        self.window._busy_count = 0
+        self.window._handle_auth_status(
+            AuthStatus("chatgpt", True, self.controller.codex_home / "auth.json")
+        )
+        self.assertIn("当前路由：relay1", self.window.auth_status_label.text())
+        self.assertIn("未启用 OpenAI 直连", self.window.policy_detail.text())
+        self.assertTrue(self.window.auth_direct_button.isEnabled())
 
 
 if __name__ == "__main__":

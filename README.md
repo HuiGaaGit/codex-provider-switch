@@ -2,7 +2,9 @@
 
 Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.3.8`
+当前交付版本：`1.3.9`
+
+1.3.9 修复部署页官方登录态按钮：检测到 ChatGPT 官方登录态但当前仍使用中转时，明确显示“当前未启用 OpenAI 直连”，并保持“登录并切换直连”可用；本地刷新、监控失败或并发任务结束后也会重新同步按钮状态。
 
 1.3.8 修复官方直连操作：新增“登录并切换直连”动作，一次完成 OpenAI 官方账号登录、切换官方路由和断开所有第三方 API 当前连接；总览页在官方直连时提供“断开所有 API”入口。断开逻辑会读取当前 `config.toml` 中的全部供应商表，兼容旧版本或手工添加的 provider 标签，并保留本地加密 Key、地址和模型。
 
@@ -93,10 +95,10 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.3.8.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.8.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.8.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.8.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.9.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.9.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.9.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.9.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
 
@@ -107,16 +109,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.8.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.8.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.9.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.9.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.8.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.8.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.8.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.9.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.9.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.9.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 
@@ -272,6 +274,12 @@ python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_sw
 - 总览页新增断开入口：官方直连时清理所有第三方 provider 的 bearer/header 连接字段，其他路由时只清理其余 provider；动态读取当前 `config.toml`，兼容旧版本和手工添加的标签。
 - Codex CLI 发现兼容 Windows npm shim 和 Explorer 启动时缺少 PATH 的常见位置。
 - 1.3.8 产物 SHA-256：便携版 `C247576A0C8793E89164653BB1D5C5E378A1DCBA55633FD2B5F8BD1CD92AA7CB`；安装包 `5589783A294F4EB1FF21FCD31FD1A02A82D1CC9B12EE976B111981ECE4771433`。
+
+## 1.3.9 变更
+
+- 修复监控、本地刷新和登录检查并发结束后部署页按钮仍保持禁用的问题。
+- 明确区分“ChatGPT 官方登录态已检测”和“当前正在使用 OpenAI 官方直连”；检测到账号登录但当前路由是 API1、API2 或 GLM 时，仍可直接点击“登录并切换直连”。
+- 1.3.9 产物 SHA-256：便携版 `58872B8C7561AF1BFF080DF1D19E721FAD68B1C6C5D800011430FAE115E788F4`；安装包 `C822D3B83E971C82C9E6D576E984D2A212301D92C85ECA7931EAFE2907CF033D`。
 
 ## 1.3.0 变更
 

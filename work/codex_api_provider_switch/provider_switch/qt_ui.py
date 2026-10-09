@@ -1731,10 +1731,19 @@ class ProviderSwitchWindow(QMainWindow):
                 "AP1 的图像扩展不提供 GPT Image 2 本地命令的 OPENAI_API_KEY。"
             )
         else:
-            self.policy_detail.setText(
-                "独立 API Key 模式：API1、API2、GLM 不受影响；OpenAI 直连按钮保持禁用，直到重新登录。"
-                "AP1 图像扩展与本地 GPT Image 2 凭据相互独立。"
-            )
+            if self.cached_auth.official_account_logged_in:
+                self.policy_detail.setText(
+                    "已检测到 ChatGPT 官方登录态，但当前策略未启用 OpenAI 直连。"
+                    "点击上方“登录并切换直连”可启用官方路由并断开第三方 API 当前连接；"
+                    "API1、API2、GLM 的地址、模型和本地 Key 会保留。"
+                    "AP1 图像扩展与本地 GPT Image 2 凭据相互独立。"
+                )
+            else:
+                self.policy_detail.setText(
+                    "独立 API Key 模式：API1、API2、GLM 不受影响；完成官方账号登录后，"
+                    "点击“登录并切换直连”才能启用 OpenAI 直连。"
+                    "AP1 图像扩展与本地 GPT Image 2 凭据相互独立。"
+                )
 
     def _apply_auth_policy(self, state: int) -> None:
         retain = bool(state)
@@ -1759,22 +1768,52 @@ class ProviderSwitchWindow(QMainWindow):
 
     def _handle_auth_status(self, status: AuthStatus) -> None:
         self.cached_auth = status
-        self.auth_check_button.setEnabled(True)
         tone = "success" if status.official_account_logged_in else "warning"
-        self.auth_status_label.setText(f"{status.label} · {status.state}")
+        try:
+            active = self.controller.detect_active_profile()
+        except Exception:
+            active = ""
+        route_note = f"当前路由：{active}" if active and active != "openai" else ""
+        if status.official_account_logged_in and not self.controller.openai_available(status):
+            route_note = (
+                f"{route_note}（未启用 OpenAI 直连，可点击“登录并切换直连”）"
+                if route_note
+                else "当前未启用 OpenAI 直连，可点击“登录并切换直连”"
+            )
+        suffix = f" · {route_note}" if route_note else ""
+        self.auth_status_label.setText(f"{status.label} · {status.state}{suffix}")
         self.auth_status_label.setProperty("tone", tone)
         self.auth_path_label.setText(f"凭据位置：{status.auth_path}（文件存在：{'是' if status.auth_file_exists else '否'}）")
-        self.auth_login_button.setEnabled(not status.official_account_logged_in)
-        self.auth_direct_button.setEnabled(not status.official_account_logged_in or not self.controller.openai_available(status))
-        self.auth_clear_button.setEnabled(
-            status.official_account_logged_in or status.auth_file_exists
-        )
+        self._sync_auth_controls()
+        self._update_policy_text()
         self._update_openai_availability()
 
     def _handle_auth_error(self, exc: BaseException) -> None:
-        self.auth_check_button.setEnabled(True)
+        self._sync_auth_controls()
         self.auth_status_label.setText(f"检查失败：{exc}")
         self._update_openai_availability()
+
+    def _sync_auth_controls(self) -> None:
+        """Keep auth actions usable after overlapping monitor/local jobs finish."""
+        if not hasattr(self, "auth_login_button"):
+            return
+        if self._busy_count:
+            enabled = False
+            self.auth_check_button.setEnabled(False)
+            self.auth_login_button.setEnabled(enabled)
+            self.auth_direct_button.setEnabled(enabled)
+            self.auth_clear_button.setEnabled(enabled)
+            return
+        status = self.cached_auth
+        self.auth_check_button.setEnabled(True)
+        self.auth_login_button.setEnabled(not status.official_account_logged_in)
+        self.auth_direct_button.setEnabled(
+            not status.official_account_logged_in
+            or not self.controller.openai_available(status)
+        )
+        self.auth_clear_button.setEnabled(
+            status.official_account_logged_in or status.auth_file_exists
+        )
 
     def login_official_ui(self) -> None:
         self._set_busy(True, "正在启动 Codex 官方登录")
@@ -1849,9 +1888,7 @@ class ProviderSwitchWindow(QMainWindow):
 
     def _handle_auth_operation_error(self, exc: BaseException) -> None:
         self._set_busy(False, "登录态操作失败")
-        self.auth_login_button.setEnabled(True)
-        self.auth_direct_button.setEnabled(True)
-        self.auth_clear_button.setEnabled(True)
+        self._sync_auth_controls()
         QMessageBox.warning(self, "登录态操作失败", str(exc))
 
     def _build_settings_page(self) -> None:
@@ -2018,12 +2055,7 @@ class ProviderSwitchWindow(QMainWindow):
         if status:
             self._set_footer(status)
         self.refresh_button.setEnabled(self._busy_count == 0)
-        if hasattr(self, "auth_login_button"):
-            enabled = self._busy_count == 0
-            self.auth_login_button.setEnabled(enabled)
-            self.auth_direct_button.setEnabled(enabled)
-            self.auth_clear_button.setEnabled(enabled)
-            self.auth_check_button.setEnabled(enabled)
+        self._sync_auth_controls()
         if self._busy_count:
             self.active_header.set_tone("warning", "处理中")
         else:
@@ -2086,6 +2118,10 @@ class ProviderSwitchWindow(QMainWindow):
         self._set_busy(False, "配置与 Token 已刷新")
         try:
             self.cached_auth = auth_status
+            # Reconcile the deployment actions after replacing the cached
+            # auth snapshot. A completed local refresh must not leave the
+            # direct-login action in the state for the previous snapshot.
+            self._sync_auth_controls()
             history_path = self.controller.codex_home / "codex-provider-switch" / "monitor-history"
             if self.monitor_history.data_dir.resolve(strict=False) != history_path.resolve(strict=False):
                 self.monitor_history = MonitorHistory(history_path)
@@ -2134,6 +2170,7 @@ class ProviderSwitchWindow(QMainWindow):
     def _handle_local_state_error(self, exc: BaseException) -> None:
         self._local_refresh_in_progress = False
         self._set_busy(False, "本地刷新失败")
+        self._sync_auth_controls()
         self.dashboard_summary.setText(f"读取配置失败：{exc}")
 
     def _update_usage(self, usage: dict[str, TokenUsage]) -> None:
@@ -2199,6 +2236,7 @@ class ProviderSwitchWindow(QMainWindow):
         self._monitoring_in_progress = False
         self._busy_count = max(0, self._busy_count - 1)
         self.refresh_button.setEnabled(self._busy_count == 0)
+        self._sync_auth_controls()
         if self._busy_count:
             self.active_header.set_tone("warning", "处理中")
         else:
@@ -2333,6 +2371,7 @@ class ProviderSwitchWindow(QMainWindow):
         self._monitoring_in_progress = False
         self._busy_count = max(0, self._busy_count - 1)
         self.refresh_button.setEnabled(self._busy_count == 0)
+        self._sync_auth_controls()
         self._set_footer(f"监控失败：{exc}")
 
     def confirm_switch(self, profile_id: str) -> None:

@@ -1,4 +1,4 @@
-# Codex Provider Switch v1.3.8
+# Codex Provider Switch v1.3.9
 
 源码入口：`codex_api_provider_switch.py`
 
@@ -14,12 +14,18 @@ python codex_api_provider_switch.py --tray-smoke-test
 ## 打包
 
 ```powershell
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.8.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.8.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.9.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.9.iss"
 .\installer\verify_install.ps1
 ```
 
-打包配置会内置 `assets/` 下的 Tabler 衍生窗口图标、第三方许可、重启助手和 GLM `models.json`。安装注入使用独立的 `models-glm.json`，避免污染 GPT 中转的模型目录。单文件产物为 `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.8.exe`，安装包为同目录下的 `Codex Provider Switch-Setup-1.3.8.exe`。安装版支持系统托盘常驻和可选开机后台监控。版本号的运行时事实源为 `provider_switch/constants.py`，Windows 文件版本由 `assets/version_info-1.3.8.txt` 提供。
+打包配置会内置 `assets/` 下的 Tabler 衍生窗口图标、第三方许可、重启助手和 GLM `models.json`。安装注入使用独立的 `models-glm.json`，避免污染 GPT 中转的模型目录。单文件产物为 `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.9.exe`，安装包为同目录下的 `Codex Provider Switch-Setup-1.3.9.exe`。安装版支持系统托盘常驻和可选开机后台监控。版本号的运行时事实源为 `provider_switch/constants.py`，Windows 文件版本由 `assets/version_info-1.3.9.txt` 提供。
+
+## 1.3.9 变更
+
+- 修复监控、本地刷新和登录检查并发结束后部署页按钮仍保持禁用的问题。
+- 明确区分“ChatGPT 官方登录态已检测”和“当前正在使用 OpenAI 官方直连”；检测到账号登录但当前路由是 API1、API2 或 GLM 时，仍可直接点击“登录并切换直连”。
+- 1.3.9 产物 SHA-256：便携版 `58872B8C7561AF1BFF080DF1D19E721FAD68B1C6C5D800011430FAE115E788F4`；安装包 `C822D3B83E971C82C9E6D576E984D2A212301D92C85ECA7931EAFE2907CF033D`。
 
 1.3.1 修复安装器关闭常驻进程：非静默安装仍会询问是否关闭程序；确认后优先通过本地 IPC 让托盘进程干净退出，旧版本或无响应进程只会按文件过滤强制关闭 `Codex Provider Switch.exe`，不会结束 Codex 或其他应用。
 1.3.2 增强 AP1 `aqyimin.chat` 兼容性：切换 GLM/API2/OpenAI 时隔离 AP1 专用配置，切回时恢复服务级别、模型设置、图像开关和白名单图像头；快照不保存任何 API key。
