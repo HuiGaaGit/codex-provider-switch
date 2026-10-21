@@ -60,7 +60,7 @@ def _decode(raw: bytes) -> tuple[str, str]:
 def _toml_value(value: str | bool | int | float) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, str):
+    if isinstance(value, (str, list)):
         return json.dumps(value, ensure_ascii=False)
     return str(value)
 
@@ -265,17 +265,27 @@ def _set_table_key(text: str, table_name: str, key: str, value: str | bool | Non
     matcher = re.compile(rf"^(?P<indent>\s*)(?P<comment>#\s*)?{re.escape(key)}\s*=")
     matches = [index for index in range(start + 1, end) if matcher.match(lines[index])]
     active = [index for index in matches if not lines[index].lstrip().startswith("#")]
+    def assignment_end(index: int) -> int:
+        stop = index + 1
+        while stop < end:
+            try:
+                tomllib.loads("".join(lines[index:stop]))
+                break
+            except tomllib.TOMLDecodeError:
+                stop += 1
+        return stop
     if value is None:
         for index in active:
-            indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
-            lines[index] = f"{indent}# {lines[index][len(indent):]}"
+            for row in range(index, assignment_end(index)):
+                indent = lines[row][: len(lines[row]) - len(lines[row].lstrip())]
+                lines[row] = f"{indent}# {lines[row][len(indent):]}"
         return "".join(lines)
     rendered = f"{key} = {_toml_value(value)}"
     if active:
         index = active[0]
-        lines[index] = rendered + (_line_ending(lines[index]) or "\n")
         for duplicate in active[1:]:
             lines[duplicate] = f"# {lines[duplicate]}"
+        lines[index:assignment_end(index)] = [rendered + (_line_ending(lines[index]) or "\n")]
     elif matches:
         index = matches[0]
         lines[index] = rendered + (_line_ending(lines[index]) or "\n")
@@ -555,6 +565,51 @@ class ConfigManager:
     @property
     def image_capability_backup(self) -> Path:
         return self.backup_directory / "image-capability.json"
+
+    @staticmethod
+    def _text_uses_deepseek(text: str) -> bool:
+        parsed = tomllib.loads(text)
+        provider = parsed.get("model_providers", {}).get(parsed.get("model_provider", ""), {})
+        host = urllib.parse.urlsplit(str(provider.get("base_url", ""))).hostname
+        return host == "api.deepseek.com" or (
+            str(parsed.get("model", "")).startswith("deepseek-")
+            and parsed.get("forced_login_method") == "api"
+        )
+
+    def _deepseek_settings(self, text: str, enabled: bool, *, capture: bool = True) -> str:
+        """Scope DeepSeek's auth/search/UI hints to its route, retaining account auth."""
+        active = self._text_uses_deepseek(text)
+        path = self.backup_directory / "deepseek-compatibility.json"
+        keys = ("preferred_auth_method", "forced_login_method", "web_search", "show_raw_agent_reasoning")
+        effort_key = "enabled-reasoning-efforts"
+        if enabled:
+            if not active and capture:
+                parsed = tomllib.loads(text)
+                payload = {key: parsed[key] for key in keys if key in parsed}
+                desktop = parsed.get("desktop", {})
+                if effort_key in desktop:
+                    payload["desktop_efforts"] = desktop[effort_key]
+                self.backup_directory.mkdir(parents=True, exist_ok=True)
+                temporary = path.with_suffix(".json.tmp")
+                temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+                os.replace(temporary, path)
+            for key, value in {
+                "preferred_auth_method": "apikey", "forced_login_method": "api",
+                "web_search": "disabled", "show_raw_agent_reasoning": True,
+            }.items():
+                text = _set_top_level(text, key, value)
+            return _set_table_key(text, "desktop", effort_key, ["low", "high", "max"])
+        if not active:
+            return text
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(saved, dict):
+                saved = {}
+        except (OSError, ValueError):
+            saved = {}
+        for key in keys:
+            text = _set_top_level(text, key, saved.get(key))
+        return _set_table_key(text, "desktop", effort_key, saved.get("desktop_efforts"))
 
     @staticmethod
     def _is_aqyimin_url(value: Any) -> bool:
@@ -912,6 +967,7 @@ class ConfigManager:
         clear_other_keys: list[str] | None = None,
     ) -> tuple[str, str]:
         original, _ = self.read()
+        original = self._deepseek_settings(original, profile.kind == "deepseek")
         original_aqyimin = self._text_uses_aqyimin(original)
         original_aqyimin_marker = self._text_has_aqyimin_image_marker(original)
         target_aqyimin = self.uses_aqyimin_compatibility(profile)
@@ -940,10 +996,10 @@ class ConfigManager:
         provider_key = stable_provider_key if preserve_provider_key else profile.provider_key
         updated = _set_top_level(original, "model_provider", provider_key)
         updated = _set_top_level(updated, "model", profile.model)
-        if profile.kind == "glm":
+        if profile.kind in {"glm", "deepseek"}:
             if catalog_path is None:
-                raise ConfigError("GLM 切换缺少 models.json 路径。")
-            updated = _set_top_level(updated, "model_reasoning_effort", "max")
+                raise ConfigError(f"{profile.display_name} 切换缺少模型目录路径。")
+            updated = _set_top_level(updated, "model_reasoning_effort", "high" if profile.kind == "deepseek" else "max")
             updated = _set_top_level(
                 updated, "model_catalog_json", catalog_path.resolve(strict=False).as_posix()
             )
@@ -951,13 +1007,13 @@ class ConfigManager:
             updated = self._restore_aqyimin_image_config(updated)
         else:
             updated = _set_top_level(updated, "model_catalog_json", None)
-        if not target_aqyimin and (leaving_aqyimin or profile.kind == "glm"):
+        if not target_aqyimin and (leaving_aqyimin or profile.kind in {"glm", "deepseek"}):
             # The image flag belongs to aqyimin's extension, not to GLM or a
             # generic relay. Keep unrelated feature flags untouched.
             updated = _set_table_key(updated, "features", "image_generation", None)
         if leaving_aqyimin:
             updated = _set_top_level(updated, "service_tier", None)
-        if profile.kind == "glm":
+        if profile.kind in {"glm", "deepseek"}:
             # Fast mode is a relay/OpenAI service tier. Do not leave it in
             # the GLM route where it can be rejected or misinterpreted.
             updated = _set_top_level(updated, "service_tier", None)
@@ -974,7 +1030,7 @@ class ConfigManager:
             "wire_api": "responses",
             # aqyimin.chat is an API-key/bearer provider even when the user
             # chooses to retain a separate official OpenAI login session.
-            "requires_openai_auth": False if target_aqyimin else profile.requires_openai_auth,
+            "requires_openai_auth": False if target_aqyimin or profile.kind in {"glm", "deepseek"} else profile.requires_openai_auth,
             "experimental_bearer_token": api_key,
         }
         updated = _upsert_provider_table(updated, provider_key, provider_values)
@@ -995,7 +1051,7 @@ class ConfigManager:
         # source unambiguous. GLM also must not inherit stale app-specific
         # actor headers from copied configs.
         updated = _remove_provider_table_keys(updated, provider_key, ("env_key",))
-        if profile.kind == "glm":
+        if profile.kind in {"glm", "deepseek"}:
             updated = _remove_provider_auth_fields(
                 updated, provider_key, remove_credentials=False, remove_headers=True
             )
@@ -1019,6 +1075,7 @@ class ConfigManager:
         this application and the active provider table are rebuilt.
         """
         original, _ = self.read()
+        original = self._deepseek_settings(original, profile.kind == "deepseek", capture=False)
         try:
             parsed = tomllib.loads(original)
         except tomllib.TOMLDecodeError as exc:
@@ -1043,6 +1100,9 @@ class ConfigManager:
         updated = _remove_table_keys(
             updated, "features", ("fast_mode", "image_generation")
         )
+        # Default templates use Codex's built-in multi-agent guidance rather
+        # than inheriting a custom usage_hint_text from the source config.
+        updated = _remove_table(updated, "features.multi_agent_v2")
         if profile.kind != "official":
             for key in {current_provider_key, provider_key} - {""}:
                 updated = _remove_table(updated, f"model_providers.{key}")
@@ -1068,10 +1128,10 @@ class ConfigManager:
         target_aqyimin = self.uses_aqyimin_compatibility(profile)
         updated = _set_top_level(updated, "model_provider", provider_key)
         updated = _set_top_level(updated, "model", profile.model)
-        if profile.kind == "glm":
+        if profile.kind in {"glm", "deepseek"}:
             if catalog_path is None:
-                raise ConfigError("GLM 默认配置缺少 models-glm.json 路径。")
-            updated = _set_top_level(updated, "model_reasoning_effort", "max")
+                raise ConfigError(f"{profile.display_name} 默认配置缺少模型目录路径。")
+            updated = _set_top_level(updated, "model_reasoning_effort", "high" if profile.kind == "deepseek" else "max")
             updated = _set_top_level(
                 updated, "model_catalog_json", catalog_path.resolve(strict=False).as_posix()
             )
@@ -1095,7 +1155,7 @@ class ConfigManager:
                 "base_url": profile.base_url,
                 "wire_api": "responses",
                 "requires_openai_auth": (
-                    False if target_aqyimin else profile.requires_openai_auth
+                    False if target_aqyimin or profile.kind in {"glm", "deepseek"} else profile.requires_openai_auth
                 ),
                 "experimental_bearer_token": api_key,
             },

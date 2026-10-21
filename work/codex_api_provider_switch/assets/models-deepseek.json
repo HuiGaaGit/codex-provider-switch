@@ -1,0 +1,73 @@
+{
+  "models": [
+    {
+      "slug": "deepseek-flash",
+      "display_name": "DeepSeek-Flash",
+      "description": "DeepSeek Responses API，支持文字与图片输入",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "快速推理" },
+        { "effort": "high", "description": "深入推理" },
+        { "effort": "max", "description": "最高推理强度" }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "base_instructions": "",
+      "prefer_websockets": false,
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "supports_reasoning_summaries": true,
+      "reasoning_summary_format": "experimental",
+      "default_reasoning_summary": "none",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "truncation_policy": { "mode": "tokens", "limit": 10000 },
+      "context_window": 1048576,
+      "max_context_window": 1048576,
+      "effective_context_window_percent": 95,
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": [],
+      "multi_agent_version": "v2",
+      "use_responses_lite": false,
+      "minimal_client_version": "0.144.0",
+      "input_modalities": ["text", "image"],
+      "supports_image_detail_original": true
+    },
+    {
+      "slug": "deepseek-v4-pro",
+      "display_name": "DeepSeek-V4-Pro",
+      "description": "DeepSeek Pro Responses API，文字输入",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "快速推理" },
+        { "effort": "high", "description": "深入推理" },
+        { "effort": "max", "description": "最高推理强度" }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 2,
+      "base_instructions": "",
+      "prefer_websockets": false,
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "supports_reasoning_summaries": true,
+      "reasoning_summary_format": "experimental",
+      "default_reasoning_summary": "none",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "truncation_policy": { "mode": "tokens", "limit": 10000 },
+      "context_window": 1048576,
+      "max_context_window": 1048576,
+      "effective_context_window_percent": 95,
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": [],
+      "multi_agent_version": "v2",
+      "use_responses_lite": false,
+      "minimal_client_version": "0.144.0",
+      "input_modalities": ["text"]
+    }
+  ]
+}

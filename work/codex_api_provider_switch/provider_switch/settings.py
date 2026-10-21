@@ -212,6 +212,23 @@ class SettingsStore:
         token = current_provider.get("experimental_bearer_token", "")
         if isinstance(token, str) and token:
             credentials["relay1"] = token
+        native_id = (
+            "deepseek" if urlparse(base_url).hostname == "api.deepseek.com"
+            else "glm" if "bigmodel.cn" in (urlparse(base_url).hostname or "")
+            else ""
+        )
+        if native_id:
+            profile = settings.profiles[native_id]
+            profile.base_url = base_url
+            profile.model = current_model or profile.model
+            settings.native_profile_id = native_id
+            settings.active_profile_id = native_id
+            if isinstance(token, str) and token:
+                credentials[native_id] = credentials.pop("relay1", token)
+            settings.profiles["openai"].model = ""
+            for relay_id in ("relay1", "relay2"):
+                settings.profiles[relay_id].base_url = ""
+                settings.profiles[relay_id].model = ""
         legacy = self._read_legacy(legacy_path)
         if legacy:
             settings.profiles["relay1"].display_name = str(
@@ -246,6 +263,10 @@ def validate_settings(settings: AppSettings) -> None:
     settings.usage_lookback_days = max(1, min(3650, int(settings.usage_lookback_days)))
     if settings.last_relay_profile_id not in {"relay1", "relay2"}:
         settings.last_relay_profile_id = "relay1"
+    if settings.native_profile_id not in {"glm", "deepseek"}:
+        settings.native_profile_id = "glm"
+    for profile_id in ("glm", "deepseek"):
+        settings.profiles[profile_id].requires_openai_auth = False
     for profile_id in ("relay1", "relay2"):
         profile = settings.profiles[profile_id]
         profile.requires_openai_auth = (

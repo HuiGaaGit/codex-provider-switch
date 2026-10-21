@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -13,6 +14,7 @@ try:
     from codex_api_provider_switch import build_demo_controller
     from provider_switch.auth_manager import AuthStatus
     from provider_switch.qt_ui import ProviderSwitchWindow
+    from provider_switch.monitor_history import HealthRecord
 except ImportError:  # pragma: no cover - exercised only on minimal Tk installs
     QApplication = None  # type: ignore[assignment]
     QPushButton = None  # type: ignore[assignment]
@@ -50,13 +52,39 @@ class QtSwitchEntryTests(unittest.TestCase):
                 ("relay1", "relay2"),
                 ("relay1", "glm"),
                 ("glm", "relay1"),
+                ("deepseek", "glm"),
+                ("glm", "deepseek"),
+                ("deepseek", "relay2"),
             ):
                 with self.subTest(current_id=current_id, target_id=target_id):
                     self.controller.detect_active_profile = Mock(return_value=current_id)
                     self.window._start_switch.reset_mock()
+                    self.controller.credentials["deepseek"] = "test-deepseek-key"
                     self.window.confirm_switch(target_id)
                     self.window._start_switch.assert_called_once_with(target_id, True)
             message_box.assert_not_called()
+
+    def test_native_card_choice_and_catalogs_are_independent(self) -> None:
+        self.window._run_job = Mock()
+        combo = self.window.native_profile_combo
+        combo.setCurrentIndex(combo.findData("deepseek"))
+        self.assertEqual("deepseek", self.controller.settings.native_profile_id)
+        self.assertTrue(self.window.provider_cards["glm"].isHidden())
+        self.assertFalse(self.window.provider_cards["deepseek"].isHidden())
+        self.assertEqual(4, sum(not card.isHidden() for card in self.window.provider_cards.values()))
+        profile_combo = self.window.profile_combo
+        profile_combo.setCurrentIndex(profile_combo.findData("deepseek"))
+        self.assertEqual("deepseek-flash", self.window.profile_model.text())
+        self.assertTrue(self.window.profile_quota_org.isHidden())
+        self.window.catalog_profile_combo.setCurrentIndex(self.window.catalog_profile_combo.findData("deepseek"))
+        self.assertEqual(self.controller.deepseek_catalog.target_path, self.window._catalog_manager().target_path)
+        self.assertIn('"deepseek-flash"', self.window.catalog_editor.toPlainText())
+        self.assertNotIn('"glm-5.3-flash"', self.window.catalog_editor.toPlainText())
+
+    def test_monitor_summary_counts_deepseek_requests(self) -> None:
+        self.window._render_monitor_page((3600, [HealthRecord(time.time(), "deepseek", "healthy", 150)]))
+        self.assertEqual("100.0%", self.window.monitor_availability_card._stat_value.text())
+        self.assertEqual("1/5", self.window.monitor_providers_card._stat_value.text())
 
     def test_monitor_page_has_no_availability_timeline(self) -> None:
         """The monitoring page keeps request summaries without the old bar chart."""

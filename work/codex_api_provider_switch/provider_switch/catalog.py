@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .constants import BACKUP_DIRECTORY_NAME, GLM_CATALOG_NAME, MODEL_CATALOG_NAME
+from .constants import BACKUP_DIRECTORY_NAME, DEEPSEEK_CATALOG_NAME, GLM_CATALOG_NAME, MODEL_CATALOG_NAME
 
 
 class CatalogError(RuntimeError):
@@ -50,11 +50,12 @@ def validate_catalog_text(text: str) -> tuple[dict[str, Any], int]:
 
 
 class ModelCatalogManager:
-    def __init__(self, codex_home: Path) -> None:
+    def __init__(self, codex_home: Path, kind: str = "glm") -> None:
         self.codex_home = codex_home.expanduser().resolve(strict=False)
-        self.target_path = self.codex_home / GLM_CATALOG_NAME
+        self.kind = kind
+        self.target_path = self.codex_home / (DEEPSEEK_CATALOG_NAME if kind == "deepseek" else GLM_CATALOG_NAME)
         self.legacy_target_path = self.codex_home / MODEL_CATALOG_NAME
-        self.bundled_path = resource_path(f"assets/{MODEL_CATALOG_NAME}")
+        self.bundled_path = resource_path(f"assets/{DEEPSEEK_CATALOG_NAME if kind == 'deepseek' else MODEL_CATALOG_NAME}")
 
     def bundled_text(self) -> str:
         try:
@@ -84,7 +85,8 @@ class ModelCatalogManager:
         if bundled_model is None:
             return False, None
         if not self.target_path.exists():
-            self._migrate_legacy_glm_catalog()
+            if self.kind == "glm":
+                self._migrate_legacy_glm_catalog()
         if not self.target_path.exists():
             _, _, backup = self.inject_bundled()
             return True, backup
@@ -117,7 +119,7 @@ class ModelCatalogManager:
         except Exception as exc:
             if backup is not None:
                 shutil.copy2(backup, self.target_path)
-            raise CatalogError(f"更新 GLM 模型能力失败：{exc}") from exc
+            raise CatalogError(f"更新模型能力失败：{exc}") from exc
         finally:
             temporary.unlink(missing_ok=True)
         return True, backup

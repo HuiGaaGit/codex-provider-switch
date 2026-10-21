@@ -271,7 +271,7 @@ def check_provider(
             quota_message = f"额度查询失败：{exc}"
 
     if not probe_health:
-        if profile.kind != "glm":
+        if profile.kind != "glm" and (profile.kind != "deepseek" or profile.quota_url):
             try:
                 quota_status, payload, _ = _http_json(_relay_quota_url(profile), api_key)
                 if quota_status == 200:
@@ -311,7 +311,7 @@ def check_provider(
     else:
         health = HealthResult(profile.profile_id, "offline", f"服务返回 HTTP {status}", latency, _now_label())
 
-    if profile.kind != "glm":
+    if profile.kind != "glm" and (profile.kind != "deepseek" or profile.quota_url):
         try:
             quota_status, payload, _ = _http_json(_relay_quota_url(profile), api_key)
             if quota_status == 200:

@@ -12,7 +12,7 @@ from typing import Callable
 from .auth_manager import AuthStatus, CodexAuthError
 from .catalog import CatalogError, resource_path, validate_catalog_text
 from .config_manager import ConfigManager, ConfigSnapshot, discover_codex_homes
-from .constants import APP_NAME, APP_VERSION, COLORS
+from .constants import APP_NAME, APP_VERSION, COLORS, NATIVE_PROFILE_IDS, PROFILE_IDS
 from .controller import ApplicationController, OperationResult
 from .models import ProviderProfile, ProviderTelemetry, TokenUsage
 from .monitoring import check_provider
@@ -21,12 +21,13 @@ from .threadripper import install_threadripper
 
 
 FONT = "Microsoft YaHei UI"
-PROFILE_ORDER = ("openai", "relay1", "relay2", "glm")
+PROFILE_ORDER = PROFILE_IDS
 PROFILE_COLORS = {
     "openai": COLORS["openai"],
     "relay1": COLORS["relay1"],
     "relay2": COLORS["relay2"],
     "glm": COLORS["glm"],
+    "deepseek": COLORS["deepseek"],
 }
 
 
@@ -448,6 +449,10 @@ class ProviderSwitchApp(tk.Tk):
             font=(FONT, 14, "bold"),
         ).grid(row=1, column=0, sticky="w", pady=(2, 0))
         self.route_detail_var = tk.StringVar()
+        self.native_profile_var = tk.StringVar(value=self.controller.settings.native_profile_id)
+        native_picker = ttk.Combobox(route, textvariable=self.native_profile_var, values=NATIVE_PROFILE_IDS, state="readonly", width=12)
+        native_picker.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        native_picker.bind("<<ComboboxSelected>>", self._select_native_profile)
         tk.Label(
             route,
             textvariable=self.route_detail_var,
@@ -462,6 +467,7 @@ class ProviderSwitchApp(tk.Tk):
         cards.columnconfigure((0, 1), weight=1, uniform="provider")
         cards.rowconfigure((0, 1), weight=1, uniform="provider")
         for index, profile_id in enumerate(PROFILE_ORDER):
+            index = min(index, 3)
             card = ProviderCard(
                 cards,
                 profile_id,
@@ -476,6 +482,19 @@ class ProviderSwitchApp(tk.Tk):
                 pady=(0, 8) if index < 2 else (8, 0),
             )
             self.provider_cards[profile_id] = card
+            if profile_id in NATIVE_PROFILE_IDS and profile_id != self.controller.settings.native_profile_id:
+                card.grid_remove()
+
+    def _select_native_profile(self, event=None) -> None:
+        selected = self.native_profile_var.get()
+        self.controller.settings.native_profile_id = selected
+        self.controller.save()
+        self._catalog_loaded = False
+        for pid in NATIVE_PROFILE_IDS:
+            if pid == selected:
+                self.provider_cards[pid].grid()
+            else:
+                self.provider_cards[pid].grid_remove()
 
     def _build_providers_page(self) -> None:
         page = self._new_page("providers")
@@ -740,19 +759,19 @@ class ProviderSwitchApp(tk.Tk):
 
     def load_catalog_from_disk(self) -> None:
         try:
-            text = self.controller.catalog.current_text()
+            text = self.controller.catalog_for().current_text()
             _, count = validate_catalog_text(text)
         except CatalogError as exc:
             messagebox.showerror(APP_NAME, str(exc), parent=self)
             return
         self._set_catalog_text(text)
-        source = self.controller.catalog.target_path
+        source = self.controller.catalog_for().target_path
         label = str(source) if source.exists() else "内置目录（本机尚未注入）"
         self.catalog_status_var.set(f"{label} · {count} 个模型")
 
     def load_bundled_catalog(self) -> None:
         try:
-            text = self.controller.catalog.bundled_text()
+            text = self.controller.catalog_for().bundled_text()
             _, count = validate_catalog_text(text)
         except CatalogError as exc:
             messagebox.showerror(APP_NAME, str(exc), parent=self)
@@ -771,7 +790,7 @@ class ProviderSwitchApp(tk.Tk):
 
     def save_catalog_editor(self) -> None:
         try:
-            path, count, _ = self.controller.catalog.save(self.catalog_text.get("1.0", "end-1c"))
+            path, count, _ = self.controller.catalog_for().save(self.catalog_text.get("1.0", "end-1c"))
         except CatalogError as exc:
             messagebox.showerror(APP_NAME, str(exc), parent=self)
             return
@@ -896,7 +915,7 @@ class ProviderSwitchApp(tk.Tk):
         self._append_tool_log("开始配置诊断")
         try:
             snapshot = self.controller.current_snapshot()
-            text = self.controller.catalog.current_text()
+            text = self.controller.catalog_for().current_text()
             _, count = validate_catalog_text(text)
             command, version = self.controller.threadripper_status()
             self._append_tool_log(f"config.toml：通过 · {snapshot.path}")
@@ -1022,10 +1041,10 @@ class ProviderSwitchApp(tk.Tk):
         retained = self.controller.settings.retain_official_auth
         self.auth_status_var.set(status.label)
         self.auth_policy_var.set(
-            "策略：保留官方登录态供 OpenAI 直连；API1、API2、GLM 使用各自 API Key"
+            "策略：保留官方登录态供 OpenAI 直连；API1、API2、GLM、DeepSeek 使用各自 API Key"
             "；配置路由一次只启用一个供应商；AP1 图像扩展与 GPT Image 2 本地命令分开"
             if retained
-            else "策略：不保留官方登录态；API1、API2、GLM 不受影响，OpenAI 直连已停用；AP1 图像扩展与本地 GPT Image 2 凭据独立"
+            else "策略：不保留官方登录态；API1、API2、GLM、DeepSeek 不受影响，OpenAI 直连已停用"
         )
         file_state = "存在" if status.auth_file_exists else "未发现（凭据也可能位于系统凭据库）"
         self.auth_path_var.set(f"auth.json：{file_state} · {status.auth_path}")
@@ -1073,13 +1092,13 @@ class ProviderSwitchApp(tk.Tk):
             return
         try:
             active = self.controller.detect_active_profile()
-            fallback = self.controller.relay_fallback() if active == "glm" else ""
+            fallback = self.controller.relay_fallback() if active in NATIVE_PROFILE_IDS else ""
         except Exception as exc:
             messagebox.showerror(APP_NAME, str(exc), parent=self)
             return
-        if active == "glm" and not messagebox.askyesno(
+        if active in NATIVE_PROFILE_IDS and not messagebox.askyesno(
             APP_NAME,
-            f"登录前将从 GLM 切换到 {self.controller.settings.profiles[fallback].display_name}。\n\n继续吗？",
+            f"登录前将从当前模型 API 切换到 {self.controller.settings.profiles[fallback].display_name}。\n\n继续吗？",
             parent=self,
         ):
             return
@@ -1156,7 +1175,7 @@ class ProviderSwitchApp(tk.Tk):
             return
         if not messagebox.askyesno(
             APP_NAME,
-            "将清除 Codex 的 OpenAI 官方登录态，并停用 OpenAI 直连。\n中转和 GLM 的配置与本地 Key 不会删除。\n\n继续吗？",
+            "将清除 Codex 的 OpenAI 官方登录态，并停用 OpenAI 直连。\n中转、GLM 和 DeepSeek 的配置与本地 Key 保留。\n\n继续吗？",
             parent=self,
         ):
             return
@@ -1336,6 +1355,14 @@ class ProviderSwitchApp(tk.Tk):
             self.telemetry_data = {}
             self.telemetry_active_id = active_id
         active_profile = self.controller.settings.profiles.get(active_id)
+        if hasattr(self, "native_profile_var"):
+            selected = self.controller.settings.native_profile_id
+            self.native_profile_var.set(selected)
+            for pid in NATIVE_PROFILE_IDS:
+                if pid == selected:
+                    self.provider_cards[pid].grid()
+                else:
+                    self.provider_cards[pid].grid_remove()
         self.active_route_var.set(active_profile.display_name if active_profile else "未识别的供应商")
         provider_label = snapshot.model_provider or "openai"
         self.route_detail_var.set(f"provider: {provider_label}")
@@ -1644,8 +1671,9 @@ class SetupWizard(tk.Toplevel):
                 or ("openai" if self.detected_auth_status.official_account_logged_in else "relay1")
             ),
             "retain_official_auth": tk.BooleanVar(value=settings.retain_official_auth),
+            "native_profile_id": tk.StringVar(value=settings.native_profile_id),
         }
-        for profile_id in ("relay1", "relay2", "glm"):
+        for profile_id in ("relay1", "relay2", *NATIVE_PROFILE_IDS):
             profile = settings.profiles[profile_id]
             self.vars[f"{profile_id}_name"] = tk.StringVar(value=profile.display_name)
             self.vars[f"{profile_id}_base_url"] = tk.StringVar(value=profile.base_url)
@@ -1806,11 +1834,14 @@ class SetupWizard(tk.Toplevel):
             return None
 
     def _render_providers(self) -> None:
-        self._heading("配置供应商", "中转名称与密钥可随时修改；GLM 已预填官方 Codex 接入地址")
+        self._heading("配置供应商", "GLM / DeepSeek 可选；分别保存 API Key 与模型目录")
         container = tk.Frame(self.content, background=COLORS["window"])
         container.grid(row=1, column=0, sticky="nsew", pady=(18, 0))
         container.columnconfigure(0, weight=1)
-        for row, profile_id in enumerate(("relay1", "relay2", "glm")):
+        picker = ttk.Combobox(container, textvariable=self.vars["native_profile_id"], values=NATIVE_PROFILE_IDS, state="readonly")
+        picker.grid(row=0, column=0, sticky="w", pady=(0, 6))
+        picker.bind("<<ComboboxSelected>>", lambda event: self.render_step())
+        for row, profile_id in enumerate(("relay1", "relay2", str(self.vars["native_profile_id"].get())), start=1):
             section = tk.Frame(
                 container,
                 background=COLORS["surface"],
@@ -1824,7 +1855,7 @@ class SetupWizard(tk.Toplevel):
             section.columnconfigure(3, weight=1)
             tk.Label(
                 section,
-                text={"relay1": "API1", "relay2": "API2", "glm": "GLM"}[profile_id],
+                text={"relay1": "API1", "relay2": "API2", "glm": "GLM", "deepseek": "DeepSeek"}[profile_id],
                 background=COLORS["surface"],
                 foreground=PROFILE_COLORS[profile_id],
                 font=(FONT, 11, "bold"),
@@ -1902,7 +1933,7 @@ class SetupWizard(tk.Toplevel):
             panel, textvariable=self.vars["stable_provider_key"], style="App.TEntry", width=28
         ).grid(row=1, column=1, sticky="w", pady=(12, 0))
         for row, key, label in (
-            (2, "inject_catalog", "注入内置 GLM models.json"),
+            (2, "inject_catalog", "注入所选模型 API 的内置模型目录"),
             (3, "auto_sync_history", "每次切换后自动同步历史会话"),
             (4, "auto_restart", "部署后自动重启 Codex（从 Codex 启动时自动跳过）"),
         ):
@@ -1976,6 +2007,7 @@ class SetupWizard(tk.Toplevel):
             "relay1": str(self.vars["relay1_name"].get()),
             "relay2": str(self.vars["relay2_name"].get()),
             "glm": str(self.vars["glm_name"].get()),
+            "deepseek": str(self.vars["deepseek_name"].get()),
         }
         self.setup_route_buttons: dict[str, tk.Radiobutton] = {}
         for profile_id in PROFILE_ORDER:
@@ -2082,7 +2114,8 @@ class SetupWizard(tk.Toplevel):
             if snapshot.model_provider:
                 self.vars["stable_provider_key"].set(snapshot.model_provider)
                 self.vars["initial_profile"].set(
-                    "glm" if snapshot.model.casefold().startswith("glm-") else "relay1"
+                    "deepseek" if snapshot.model.casefold().startswith("deepseek-")
+                    else "glm" if snapshot.model.casefold().startswith("glm-") else "relay1"
                 )
             else:
                 self.vars["initial_profile"].set(
@@ -2092,17 +2125,22 @@ class SetupWizard(tk.Toplevel):
                 )
             current = snapshot.providers.get(snapshot.model_provider, {})
             if current:
-                if not str(self.vars["relay1_base_url"].get()).strip():
-                    self.vars["relay1_base_url"].set(str(current.get("base_url", "")))
-                if not str(self.vars["relay1_model"].get()).strip():
-                    self.vars["relay1_model"].set(snapshot.model)
-                if not str(self.vars["relay1_key"].get()).strip():
+                current_id = str(self.vars["initial_profile"].get())
+                if current_id in NATIVE_PROFILE_IDS:
+                    self.vars["native_profile_id"].set(current_id)
+                else:
+                    current_id = "relay1"
+                if not str(self.vars[f"{current_id}_base_url"].get()).strip():
+                    self.vars[f"{current_id}_base_url"].set(str(current.get("base_url", "")))
+                if not str(self.vars[f"{current_id}_model"].get()).strip():
+                    self.vars[f"{current_id}_model"].set(snapshot.model)
+                if not str(self.vars[f"{current_id}_key"].get()).strip():
                     token = current.get("experimental_bearer_token", "")
                     if isinstance(token, str):
-                        self.vars["relay1_key"].set(token)
+                        self.vars[f"{current_id}_key"].set(token)
             return True
         if self.step == 1:
-            for profile_id in ("relay1", "relay2", "glm"):
+            for profile_id in ("relay1", "relay2", *NATIVE_PROFILE_IDS):
                 if not str(self.vars[f"{profile_id}_name"].get()).strip():
                     messagebox.showerror(APP_NAME, "供应商名称不能为空。", parent=self)
                     return False
@@ -2126,7 +2164,8 @@ class SetupWizard(tk.Toplevel):
         settings.auto_restart = bool(self.vars["auto_restart"].get())
         settings.auto_sync_history = bool(self.vars["auto_sync_history"].get())
         settings.retain_official_auth = bool(self.vars["retain_official_auth"].get())
-        for profile_id in ("relay1", "relay2", "glm"):
+        settings.native_profile_id = str(self.vars["native_profile_id"].get())
+        for profile_id in ("relay1", "relay2", *NATIVE_PROFILE_IDS):
             profile = settings.profiles[profile_id]
             profile.display_name = str(self.vars[f"{profile_id}_name"].get()).strip()
             profile.base_url = str(self.vars[f"{profile_id}_base_url"].get()).strip()
@@ -2155,7 +2194,7 @@ class SetupWizard(tk.Toplevel):
         ):
             if not messagebox.askyesno(
                 APP_NAME,
-                "完成部署时将退出 OpenAI 官方账号并清除 auth.json。\n中转和 GLM 的配置与 Key 会保留。\n\n继续吗？",
+                "完成部署时将退出 OpenAI 官方账号并清除 auth.json。\n中转、GLM 和 DeepSeek 的配置与 Key 保留。\n\n继续吗？",
                 parent=self,
             ):
                 return
@@ -2166,7 +2205,7 @@ class SetupWizard(tk.Toplevel):
                 if not profile.base_url or not profile.model or not self.controller.credentials.get(profile_id):
                     raise SettingsError(f"{profile.display_name} 缺少 API 地址、模型或 Key。")
             if self.vars["inject_catalog"].get():
-                self.controller.catalog.inject_bundled()
+                self.controller.catalog_for(profile_id).inject_bundled()
         except Exception as exc:
             messagebox.showerror(APP_NAME, str(exc), parent=self)
             return

@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 
 from .auth_manager import AuthStatus
 from .catalog import resource_path, validate_catalog_text
-from .constants import APP_NAME, APP_VERSION
+from .constants import APP_NAME, APP_VERSION, NATIVE_PROFILE_IDS, PROFILE_IDS
 from .config_manager import ConfigError, ConfigManager
 from .controller import ApplicationController, OperationResult
 from .models import ConfigSnapshot, ProviderProfile, ProviderTelemetry, TokenUsage
@@ -58,6 +58,7 @@ PROFILE_COLORS = {
     "relay1": "#63b3ff",
     "relay2": "#ffb35c",
     "glm": "#c89cff",
+    "deepseek": "#829cff",
 }
 
 INSTANCE_SERVER_NAME = "CodexProviderSwitch.BackgroundMonitor"
@@ -243,7 +244,9 @@ class ProviderCard(GlassPanel):
     def set_profile(self, profile: ProviderProfile) -> None:
         self.title.setText(profile.display_name)
         self.model.setText(profile.model or ("Codex 官方默认" if profile.kind == "official" else "尚未配置模型"))
-        self.quota_button.setVisible(profile.kind != "official")
+        self.quota_button.setVisible(profile.kind != "official" and (profile.kind != "deepseek" or bool(profile.quota_url)))
+        if profile.kind == "deepseek" and not profile.quota_url:
+            self.quota_text.setText("额度：未配置查询接口")
 
     def _polish(self, widget: QWidget) -> None:
         widget.style().unpolish(widget)
@@ -482,7 +485,7 @@ class TokenGaugeWidget(QWidget):
         self._ratio = 0.0
         self._color = QColor("#71d3ae")
         self._sessions = 0
-        self.setMinimumSize(150, 168)
+        self.setMinimumSize(110, 168)
 
     def set_data(self, label: str, tokens: int, ratio: float, color: str, sessions: int) -> None:
         self._label = label
@@ -919,17 +922,31 @@ class ProviderSwitchWindow(QMainWindow):
         self.dashboard_summary = QLabel("正在读取 Codex 配置…")
         self.dashboard_summary.setProperty("class", "body")
         layout.addWidget(self.dashboard_summary)
+        native_row = QHBoxLayout()
+        native_row.addWidget(QLabel("模型 API"))
+        self.native_profile_combo = QComboBox()
+        for pid in NATIVE_PROFILE_IDS:
+            self.native_profile_combo.addItem(self.controller.settings.profiles[pid].display_name, pid)
+        self.native_profile_combo.setCurrentIndex(NATIVE_PROFILE_IDS.index(self.controller.settings.native_profile_id))
+        native_row.addWidget(self.native_profile_combo)
+        native_row.addWidget(QLabel("选择后点击对应卡片切换；Key 和模型分别保存"))
+        native_row.addStretch(1)
+        layout.addLayout(native_row)
         cards = QWidget()
         self.cards_grid = QGridLayout(cards)
         self.cards_grid.setContentsMargins(0, 0, 0, 0)
         self.cards_grid.setHorizontalSpacing(12)
         self.cards_grid.setVerticalSpacing(8)
-        for index, profile_id in enumerate(("openai", "relay1", "relay2", "glm")):
+        for index, profile_id in enumerate(PROFILE_IDS):
+            index = min(index, 3)
             card = ProviderCard(profile_id)
             card.switch_requested.connect(self.confirm_switch)
             card.quota_requested.connect(self.query_provider_quota)
             self.provider_cards[profile_id] = card
             self.cards_grid.addWidget(card, index // 2, index % 2)
+            if profile_id in NATIVE_PROFILE_IDS:
+                card.setVisible(profile_id == self.controller.settings.native_profile_id)
+        self.native_profile_combo.currentIndexChanged.connect(self._select_native_profile)
         layout.addWidget(cards, 1)
 
         bottom = QHBoxLayout()
@@ -956,6 +973,23 @@ class ProviderSwitchWindow(QMainWindow):
         bottom.addWidget(self.token_summary, 1)
         bottom.addWidget(self.alert_summary, 1)
         layout.addLayout(bottom)
+
+    def _select_native_profile(self) -> None:
+        selected = str(self.native_profile_combo.currentData())
+        self.controller.settings.native_profile_id = selected
+        for pid in NATIVE_PROFILE_IDS:
+            self.provider_cards[pid].setVisible(pid == selected)
+        self._run_job(self.controller.save, failure=lambda exc: QMessageBox.warning(self, "保存选择失败", str(exc)))
+
+    def _sync_native_selection(self) -> None:
+        if not hasattr(self, "native_profile_combo"):
+            return
+        selected = self.controller.settings.native_profile_id
+        self.native_profile_combo.blockSignals(True)
+        self.native_profile_combo.setCurrentIndex(self.native_profile_combo.findData(selected))
+        self.native_profile_combo.blockSignals(False)
+        for pid in NATIVE_PROFILE_IDS:
+            self.provider_cards[pid].setVisible(pid == selected)
 
     def _build_monitoring_page(self) -> None:
         page, layout = self._page(
@@ -1045,8 +1079,8 @@ class ProviderSwitchWindow(QMainWindow):
         self.token_gauges_grid = QHBoxLayout()
         self.token_gauges_grid.setSpacing(10)
         self._token_gauge_widgets: dict[str, TokenGaugeWidget] = {}
-        gauge_colors = {"openai": "#138a68", "relay1": "#1879b8", "relay2": "#c06a1b", "glm": "#7257b5"}
-        for pid in ("openai", "relay1", "relay2", "glm"):
+        gauge_colors = {"openai": "#138a68", "relay1": "#1879b8", "relay2": "#c06a1b", "glm": "#7257b5", "deepseek": "#4866d5"}
+        for pid in PROFILE_IDS:
             gauge = TokenGaugeWidget()
             gauge.set_data("", 0, 0.0, gauge_colors[pid], 0)
             self._token_gauge_widgets[pid] = gauge
@@ -1098,7 +1132,7 @@ class ProviderSwitchWindow(QMainWindow):
             self._monitor_scope_hint.setText(
                 "当前时间范围暂无检查记录；点击右上角刷新，或等待当前供应商完成首次检查。"
             )
-        profile_ids = ["openai", "relay1", "relay2", "glm"]
+        profile_ids = list(PROFILE_IDS)
         summaries = self.monitor_history.summarize(records, profile_ids)
         total_checks = sum(s.total_checks for s in summaries.values())
         healthy_checks = sum(s.healthy_checks for s in summaries.values())
@@ -1148,8 +1182,8 @@ class ProviderSwitchWindow(QMainWindow):
                 return
             usage = result
             max_tokens = max((u.total_tokens for u in usage.values()), default=0)
-            colors = {"openai": "#138a68", "relay1": "#1879b8", "relay2": "#c06a1b", "glm": "#7257b5"}
-            for pid in ("openai", "relay1", "relay2", "glm"):
+            colors = {"openai": "#138a68", "relay1": "#1879b8", "relay2": "#c06a1b", "glm": "#7257b5", "deepseek": "#4866d5"}
+            for pid in PROFILE_IDS:
                 profile = self.controller.settings.profiles.get(pid)
                 gauge = self._token_gauge_widgets.get(pid)
                 if profile is None or gauge is None:
@@ -1176,7 +1210,7 @@ class ProviderSwitchWindow(QMainWindow):
         self.profile_combo = QComboBox()
         self.profile_combo.setMinimumWidth(250)
         self.profile_combo.currentIndexChanged.connect(self._load_profile_form)
-        for profile_id in ("relay1", "relay2", "glm"):
+        for profile_id in ("relay1", "relay2", *NATIVE_PROFILE_IDS):
             self.profile_combo.addItem(self.controller.settings.profiles[profile_id].display_name, profile_id)
         form.addRow("编辑供应商", self.profile_combo)
         self.profile_name = QLineEdit()
@@ -1228,7 +1262,7 @@ class ProviderSwitchWindow(QMainWindow):
         note = QLabel(
             "中转默认自动探测 Sub2API /v1/usage 额度；也可填专用额度接口。"
             "GLM 团队套餐需同时填写组织 ID 和项目 ID；项目 ID 使用下划线格式 proj_xxxxxxx。"
-            "官方账号登录态只用于 OpenAI 直连；API1、API2、GLM 的 API Key 独立管理。"
+            "官方账号登录态只用于 OpenAI 直连；API1、API2、GLM、DeepSeek 的 API Key 独立管理。"
             "仅当 API 地址属于 aqyimin.chat 时启用 AP1 图像扩展；更换为其他 URL 后按 API2 的通用中转配置处理。"
             "GPT Image 2 本地生成命令仍需独立的 OPENAI_API_KEY。"
         )
@@ -1351,13 +1385,21 @@ class ProviderSwitchWindow(QMainWindow):
         page, layout = self._page(
             "catalog",
             "配置预览及调整",
-            "编辑 GLM models.json 和当前供应商 config.toml；人工调整会用于后续切换",
+            "分别编辑 GLM / DeepSeek 模型目录和当前供应商 config.toml；人工调整会用于后续切换",
         )
         panel = GlassPanel(strong=True)
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(16, 14, 16, 14)
         toolbar = QHBoxLayout()
-        self.catalog_path_label = QLabel(str(self.controller.catalog.target_path))
+        self.catalog_profile_combo = QComboBox()
+        for pid in NATIVE_PROFILE_IDS:
+            self.catalog_profile_combo.addItem(self.controller.settings.profiles[pid].display_name, pid)
+        self.catalog_profile_combo.setCurrentIndex(NATIVE_PROFILE_IDS.index(self.controller.settings.native_profile_id))
+        toolbar.addWidget(self.catalog_profile_combo)
+        self.catalog_path_label = QLabel(str(self.controller.catalog_for().target_path))
+        self.catalog_path_label.setMinimumWidth(0)
+        self.catalog_path_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.catalog_path_label.setWordWrap(True)
         self.catalog_path_label.setProperty("class", "muted")
         toolbar.addWidget(self.catalog_path_label, 1)
         for label, slot in (
@@ -1376,6 +1418,7 @@ class ProviderSwitchWindow(QMainWindow):
         panel_layout.addWidget(self.catalog_editor, 1)
         layout.addWidget(panel, 1)
         self.catalog_hint = QLabel("尚未载入 models.json")
+        self.catalog_hint.setWordWrap(True)
         self.catalog_hint.setProperty("class", "muted")
         layout.addWidget(self.catalog_hint)
 
@@ -1384,6 +1427,8 @@ class ProviderSwitchWindow(QMainWindow):
         config_layout.setContentsMargins(16, 14, 16, 14)
         config_toolbar = QHBoxLayout()
         self.config_scope_label = QLabel("当前 config.toml")
+        self.config_scope_label.setMinimumWidth(0)
+        self.config_scope_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.config_scope_label.setProperty("class", "muted")
         config_toolbar.addWidget(self.config_scope_label, 1)
         for label, slot in (
@@ -1402,25 +1447,55 @@ class ProviderSwitchWindow(QMainWindow):
         config_layout.addWidget(self.config_editor, 1)
         layout.addWidget(config_panel, 1)
         self.config_hint = QLabel("尚未载入 config.toml")
+        self.config_hint.setWordWrap(True)
         self.config_hint.setProperty("class", "muted")
         layout.addWidget(self.config_hint)
+        self._catalog_profile_id = str(self.catalog_profile_combo.currentData())
+        self.catalog_profile_combo.currentIndexChanged.connect(self._change_catalog_profile)
+
+    def _change_catalog_profile(self) -> None:
+        selected = str(self.catalog_profile_combo.currentData())
+        if self.catalog_editor.document().isModified():
+            answer = QMessageBox.question(
+                self, "模型目录尚未保存", "切换模型目录前，是否保存当前编辑内容？",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Cancel,
+            )
+            if answer == QMessageBox.Save:
+                try:
+                    self.controller.catalog_for(self._catalog_profile_id).save(self.catalog_editor.toPlainText())
+                except Exception as exc:
+                    QMessageBox.warning(self, "保存失败", str(exc))
+                    answer = QMessageBox.Cancel
+            if answer == QMessageBox.Cancel:
+                self.catalog_profile_combo.blockSignals(True)
+                self.catalog_profile_combo.setCurrentIndex(self.catalog_profile_combo.findData(self._catalog_profile_id))
+                self.catalog_profile_combo.blockSignals(False)
+                return
+        self._catalog_profile_id = selected
+        self.load_catalog_from_disk()
+
+    def _catalog_manager(self):
+        return self.controller.catalog_for(str(self.catalog_profile_combo.currentData()))
 
     def _set_catalog_text(self, text: str) -> None:
         self.catalog_editor.setPlainText(text)
+        self.catalog_editor.document().setModified(False)
         self._catalog_loaded = True
-        self.catalog_path_label.setText(str(self.controller.catalog.target_path))
+        self.catalog_path_label.setText(str(self._catalog_manager().target_path))
 
     def load_catalog_from_disk(self) -> None:
         try:
-            self._set_catalog_text(self.controller.catalog.current_text())
+            self._set_catalog_text(self._catalog_manager().current_text())
             _, count = validate_catalog_text(self.catalog_editor.toPlainText())
-            self.catalog_hint.setText(f"已读取 {count} 个模型 · {self.controller.catalog.target_path}")
+            self.catalog_hint.setText(f"已读取 {count} 个模型 · {self._catalog_manager().target_path}")
         except Exception as exc:
             QMessageBox.warning(self, "读取失败", str(exc))
 
     def load_bundled_catalog(self) -> None:
         try:
-            self._set_catalog_text(self.controller.catalog.bundled_text())
+            self._set_catalog_text(self._catalog_manager().bundled_text())
+            self.catalog_editor.document().setModified(True)
             _, count = validate_catalog_text(self.catalog_editor.toPlainText())
             self.catalog_hint.setText(f"已载入内置目录，共 {count} 个模型；点击保存并注入后才会写入本机")
         except Exception as exc:
@@ -1435,7 +1510,8 @@ class ProviderSwitchWindow(QMainWindow):
 
     def save_catalog_editor(self) -> None:
         try:
-            target, count, backup = self.controller.catalog.save(self.catalog_editor.toPlainText())
+            target, count, backup = self._catalog_manager().save(self.catalog_editor.toPlainText())
+            self.catalog_editor.document().setModified(False)
             self.catalog_hint.setText(f"已保存并注入 {count} 个模型：{target}")
             if backup:
                 self._set_footer(f"models.json 已备份至 {backup.name}")
@@ -1726,8 +1802,8 @@ class ProviderSwitchWindow(QMainWindow):
     def _update_policy_text(self) -> None:
         if self.controller.settings.retain_official_auth:
             self.policy_detail.setText(
-                "保留官方登录态；API1、API2、GLM 均使用各自的 API Key，切回 OpenAI 直连时无需重新登录。"
-                "配置路由仍一次只启用一个供应商，保留 auth.json 不等于与 GLM 同时连接。"
+                "保留官方登录态；API1、API2、GLM、DeepSeek 均使用各自的 API Key，切回 OpenAI 直连时无需重新登录。"
+                "配置路由一次只启用一个供应商，官方登录态独立保留。"
                 "AP1 的图像扩展不提供 GPT Image 2 本地命令的 OPENAI_API_KEY。"
             )
         else:
@@ -1735,12 +1811,12 @@ class ProviderSwitchWindow(QMainWindow):
                 self.policy_detail.setText(
                     "已检测到 ChatGPT 官方登录态，但当前策略未启用 OpenAI 直连。"
                     "点击上方“登录并切换直连”可启用官方路由并断开第三方 API 当前连接；"
-                    "API1、API2、GLM 的地址、模型和本地 Key 会保留。"
+                    "API1、API2、GLM、DeepSeek 的地址、模型和本地 Key 会保留。"
                     "AP1 图像扩展与本地 GPT Image 2 凭据相互独立。"
                 )
             else:
                 self.policy_detail.setText(
-                    "独立 API Key 模式：API1、API2、GLM 不受影响；完成官方账号登录后，"
+                    "独立 API Key 模式：API1、API2、GLM、DeepSeek 不受影响；完成官方账号登录后，"
                     "点击“登录并切换直连”才能启用 OpenAI 直连。"
                     "AP1 图像扩展与本地 GPT Image 2 凭据相互独立。"
                 )
@@ -1855,7 +1931,7 @@ class ProviderSwitchWindow(QMainWindow):
             self,
             "官方直连已启用",
             "已切换到 OpenAI 官方账号，其他 API 供应商的当前连接已断开。\n"
-            "如需恢复中转，可直接点击 API1、API2 或 GLM。",
+            "如需恢复 API，可直接点击 API1、API2 或选择 GLM / DeepSeek。",
         )
 
     def _handle_login_result(self, result: tuple[OperationResult | None, AuthStatus]) -> None:
@@ -1868,7 +1944,7 @@ class ProviderSwitchWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             "清空官方登录态",
-            "这会删除 Codex 官方 auth，并将当前官方/GLM 路由切回已配置的中转。是否继续？",
+            "这会清除 Codex 官方登录态；当前为官方直连时切回已配置的中转，GLM / DeepSeek 的独立 Key 保留。是否继续？",
         )
         if answer != QMessageBox.Yes:
             return
@@ -2118,6 +2194,7 @@ class ProviderSwitchWindow(QMainWindow):
         self._set_busy(False, "配置与 Token 已刷新")
         try:
             self.cached_auth = auth_status
+            self._sync_native_selection()
             # Reconcile the deployment actions after replacing the cached
             # auth snapshot. A completed local refresh must not leave the
             # direct-login action in the state for the previous snapshot.
@@ -2437,6 +2514,7 @@ class ProviderSwitchWindow(QMainWindow):
 
     def _handle_switch_done(self, result: OperationResult) -> None:
         self._set_busy(False, f"已切换到 {self.controller.settings.profiles[result.profile_id].display_name}")
+        self._sync_native_selection()
         self.refresh_all(local_only=True)
         self.refresh_deployment_view()
         QTimer.singleShot(400, self.refresh_monitoring)
@@ -2603,9 +2681,30 @@ class SetupWizard(QDialog):
         self.wizard_glm_key = QLineEdit()
         self.wizard_glm_key.setEchoMode(QLineEdit.Password)
         self.wizard_glm_key.setPlaceholderText("可选；只保存在本机加密凭据库")
+        self.wizard_native_combo = QComboBox()
+        self.wizard_native_combo.addItem("GLM", "glm")
+        self.wizard_native_combo.addItem("DeepSeek", "deepseek")
+        self.wizard_native_combo.setCurrentIndex(NATIVE_PROFILE_IDS.index(self.controller.settings.native_profile_id))
+        form.addRow("模型 API 供应商", self.wizard_native_combo)
         form.addRow("GLM API Key", self.wizard_glm_key)
+        self.wizard_deepseek_key = QLineEdit()
+        self.wizard_deepseek_key.setEchoMode(QLineEdit.Password)
+        self.wizard_deepseek_key.setPlaceholderText("可选；留空保留已保存 Key")
+        form.addRow("DeepSeek API Key", self.wizard_deepseek_key)
+        self.wizard_deepseek_model = QComboBox()
+        self.wizard_deepseek_model.setEditable(True)
+        self.wizard_deepseek_model.addItems(["deepseek-flash", "deepseek-v4-pro"])
+        self.wizard_deepseek_model.setCurrentText(self.controller.settings.profiles["deepseek"].model)
+        form.addRow("DeepSeek 模型", self.wizard_deepseek_model)
+        def update_native_fields() -> None:
+            ds = self.wizard_native_combo.currentData() == "deepseek"
+            for field, visible in ((self.wizard_glm_key, not ds), (self.wizard_deepseek_key, ds), (self.wizard_deepseek_model, ds)):
+                field.setVisible(visible)
+                form.labelForField(field).setVisible(visible)
+        self.wizard_native_combo.currentIndexChanged.connect(update_native_fields)
+        update_native_fields()
         layout.addWidget(panel)
-        hint = QLabel("GLM 会自动注入内置 models.json；保存后可在“GLM 模型目录”继续修改。")
+        hint = QLabel("GLM / DeepSeek 分别保存 Key 与模型目录；可在“配置预览及调整”独立修改。")
         hint.setProperty("class", "muted")
         layout.addWidget(hint)
         layout.addStretch(1)
@@ -2641,6 +2740,7 @@ class SetupWizard(QDialog):
         self.wizard_route.addItem("API1", "relay1")
         self.wizard_route.addItem("API2", "relay2")
         self.wizard_route.addItem("GLM", "glm")
+        self.wizard_route.addItem("DeepSeek", "deepseek")
         self.wizard_route.addItem("OpenAI 官方直连（需已登录）", "openai")
         form.addRow("首次路由", self.wizard_route)
         layout.addWidget(panel)
@@ -2712,7 +2812,8 @@ class SetupWizard(QDialog):
         token_exists = bool(current.get("experimental_bearer_token"))
         relay1 = self.controller.settings.profiles["relay1"]
         relay2 = self.controller.settings.profiles["relay2"]
-        if base_url and not self.wizard_relay1_url.text():
+        is_native = str(snapshot.model).startswith(("glm-", "deepseek-")) or "api.deepseek.com" in base_url or "bigmodel.cn" in base_url
+        if base_url and not is_native and not self.wizard_relay1_url.text():
             self.wizard_relay1_url.setText(base_url)
         self.wizard_relay1_name.setText(relay1.display_name)
         self.wizard_relay2_name.setText(relay2.display_name)
@@ -2724,7 +2825,7 @@ class SetupWizard(QDialog):
         if getattr(self, "probed_auth", None) and self.probed_auth.official_account_logged_in:
             if self.wizard_retain_auth.isChecked():
                 self.auth_choice_hint.setText(
-                    "检测到官方登录态：将保留它供 OpenAI 直连使用；API1、API2、GLM 仍使用各自的 API Key。"
+                    "检测到官方登录态：将保留它供 OpenAI 直连使用；各 API 供应商仍使用各自的 Key。"
                 )
             else:
                 self.auth_choice_hint.setText("你选择不保留：完成部署后会清除 auth.json，OpenAI 直连按钮会暂时禁用。")
@@ -2740,7 +2841,7 @@ class SetupWizard(QDialog):
                 )
             else:
                 self.auth_choice_hint.setText(
-                    "当前未检测到官方账号登录态：API1、API2、GLM 将使用各自的 API Key；稍后可在部署模块重新登录。"
+                    "当前未检测到官方账号登录态：各 API 供应商使用各自的 Key；稍后可在部署模块重新登录。"
                 )
 
     def _render_step(self) -> None:
@@ -2758,9 +2859,16 @@ class SetupWizard(QDialog):
         snapshot = getattr(self, "probed_snapshot", None)
         if snapshot is not None and not snapshot.model_provider:
             auth = getattr(self, "probed_auth", None)
-            return "openai" if auth is not None and auth.official_account_logged_in else "relay1"
+            if auth is not None and auth.official_account_logged_in:
+                return "openai"
+            native = str(self.wizard_native_combo.currentData())
+            if self._wizard_key_available(native) and not self.wizard_relay1_url.text().strip():
+                return native
+            return "relay1"
         if snapshot is not None and str(snapshot.model).casefold().startswith("glm-"):
             return "glm"
+        if snapshot is not None and str(snapshot.model).casefold().startswith("deepseek-"):
+            return "deepseek"
         return "relay1"
 
     def _wizard_key_available(self, profile_id: str) -> bool:
@@ -2768,14 +2876,16 @@ class SetupWizard(QDialog):
             "relay1": self.wizard_relay1_key,
             "relay2": self.wizard_relay2_key,
             "glm": self.wizard_glm_key,
+            "deepseek": self.wizard_deepseek_key,
         }[profile_id]
         if field.text().strip() or self.controller.credentials.get(profile_id):
             return True
-        if profile_id == "relay1":
+        if profile_id in {"relay1", *NATIVE_PROFILE_IDS}:
             snapshot = getattr(self, "probed_snapshot", None)
             if snapshot is not None and snapshot.model_provider:
                 current = snapshot.providers.get(snapshot.model_provider, {})
-                return bool(current.get("experimental_bearer_token"))
+                native = "deepseek" if str(snapshot.model).startswith("deepseek-") else "glm" if str(snapshot.model).startswith("glm-") else "relay1"
+                return native == profile_id and bool(current.get("experimental_bearer_token"))
         return False
 
     def _render_summary(self) -> None:
@@ -2837,8 +2947,8 @@ class SetupWizard(QDialog):
                 if not url_field.text().strip() or not self._wizard_key_available(route):
                     QMessageBox.warning(self, "供应商未配置", f"{label} 需要完整的 API 地址和 Key。")
                     return False
-            elif route == "glm" and not self._wizard_key_available("glm"):
-                QMessageBox.warning(self, "GLM 未配置", "首次启用 GLM 前需要填写 GLM API Key。")
+            elif route in NATIVE_PROFILE_IDS and not self._wizard_key_available(route):
+                QMessageBox.warning(self, "供应商未配置", f"首次启用 {route} 前需要填写对应 API Key。")
                 return False
         return True
 
@@ -2853,6 +2963,7 @@ class SetupWizard(QDialog):
         settings.auto_restart = self.wizard_auto_restart.isChecked()
         settings.auto_sync_history = self.wizard_auto_sync.isChecked()
         settings.retain_official_auth = self.wizard_retain_auth.isChecked()
+        settings.native_profile_id = str(self.wizard_native_combo.currentData())
 
         relay1 = settings.profiles["relay1"]
         relay1.display_name = self.wizard_relay1_name.text().strip() or "API1"
@@ -2864,7 +2975,8 @@ class SetupWizard(QDialog):
         relay2.model = relay2.model or relay1.model
         glm = settings.profiles["glm"]
         glm_key = self.wizard_glm_key.text().strip()
-        for profile_id, value in (("relay1", self.wizard_relay1_key.text().strip()), ("relay2", self.wizard_relay2_key.text().strip()), ("glm", glm_key)):
+        settings.profiles["deepseek"].model = self.wizard_deepseek_model.currentText().strip()
+        for profile_id, value in (("relay1", self.wizard_relay1_key.text().strip()), ("relay2", self.wizard_relay2_key.text().strip()), ("glm", glm_key), ("deepseek", self.wizard_deepseek_key.text().strip())):
             if value:
                 self.controller.credentials[profile_id] = value
         for profile_id in ("relay1", "relay2"):
@@ -2877,6 +2989,8 @@ class SetupWizard(QDialog):
         self.controller.save()
         if glm_key and not self.controller.catalog.target_path.exists():
             self.controller.catalog.inject_bundled()
+        if self.wizard_deepseek_key.text().strip() and not self.controller.deepseek_catalog.target_path.exists():
+            self.controller.deepseek_catalog.inject_bundled()
         route = self._resolved_wizard_route()
         if route == "openai" and not self.controller.openai_available(getattr(self, "probed_auth", None)):
             raise RuntimeError("当前未检测到官方登录态，请先选择中转或在部署模块完成登录。")
@@ -2910,6 +3024,7 @@ class SetupWizard(QDialog):
         self.controller.save()
         self.host._set_footer("首次部署完成")
         self.host.cached_auth = self.controller.auth_status()
+        self.host._sync_native_selection()
         if result.warnings:
             QMessageBox.information(self, "部署完成", "\n".join(result.warnings))
         QTimer.singleShot(800, self.accept)

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import json
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from .auth_manager import AuthStatus, CodexAuthError, CodexAuthManager
-from .catalog import ModelCatalogManager
+from .catalog import CatalogError, ModelCatalogManager, validate_catalog_text
 from .codex_process import CodexProcessController
 from .config_manager import ConfigError, ConfigManager, discover_codex_homes
-from .constants import SWITCH_LOG_NAME
+from .constants import NATIVE_PROFILE_IDS, SWITCH_LOG_NAME
 from .models import AppSettings, ConfigSnapshot, HealthResult, ProviderTelemetry, TokenUsage
 from .monitoring import check_provider, scan_token_usage, scan_token_usage_seconds
 from .monitor_history import HealthRecord, MonitorHistory
@@ -65,7 +66,12 @@ class ApplicationController:
                 # preview/switch path; startup must remain usable for repair.
                 pass
         self.catalog = ModelCatalogManager(home)
+        self.deepseek_catalog = ModelCatalogManager(home, "deepseek")
         self.auth = CodexAuthManager(home)
+
+    def catalog_for(self, profile_id: str | None = None) -> ModelCatalogManager:
+        selected = profile_id or self.settings.native_profile_id
+        return self.deepseek_catalog if selected == "deepseek" else self.catalog
 
     @property
     def codex_home(self) -> Path:
@@ -136,7 +142,7 @@ class ApplicationController:
             token = provider.get("experimental_bearer_token", "") if isinstance(provider, dict) else ""
             if isinstance(token, str):
                 api_key = token.strip()
-        catalog_path = self.catalog.target_path if profile.kind == "glm" else None
+        catalog_path = self.catalog_for(profile_id).target_path if profile_id in NATIVE_PROFILE_IDS else None
         text, _ = self.config.render_default_profile(
             profile,
             api_key,
@@ -163,9 +169,9 @@ class ApplicationController:
         if self.settings.preserve_provider_key:
             self.settings.stable_provider_key = snapshot.model_provider
         active = self.detect_active_profile()
-        if active not in {"relay1", "relay2", "glm"}:
+        if active not in {"relay1", "relay2", "glm", "deepseek"}:
             active = self.settings.active_profile_id if self.settings.active_profile_id in {
-                "relay1", "relay2", "glm"
+                "relay1", "relay2", "glm", "deepseek"
             } else "relay1"
         profile = self.settings.profiles[active]
         name = str(provider.get("name", "")).strip()
@@ -187,6 +193,8 @@ class ApplicationController:
         if isinstance(token, str) and token.strip():
             self.credentials[active] = token.strip()
         self.settings.active_profile_id = active
+        if active in NATIVE_PROFILE_IDS:
+            self.settings.native_profile_id = active
 
     def auth_status(self) -> AuthStatus:
         return self.auth.status()
@@ -216,6 +224,8 @@ class ApplicationController:
         """
         profile = self.settings.profiles.get(profile_id)
         if profile is None or not profile.enabled or profile.kind == "official":
+            return False
+        if profile.kind == "deepseek" and not profile.quota_url:
             return False
         return bool(
             self.credentials.get(profile_id, "").strip()
@@ -263,7 +273,7 @@ class ApplicationController:
     ) -> tuple[OperationResult | None, AuthStatus]:
         switched: OperationResult | None = None
         active = self.detect_active_profile()
-        fallback = self.relay_fallback() if active == "glm" else None
+        fallback = self.relay_fallback() if active in NATIVE_PROFILE_IDS else None
         status = self.auth.status()
         if not status.official_account_logged_in:
             if progress:
@@ -272,7 +282,7 @@ class ApplicationController:
         self._set_auth_retention(True)
         if fallback is not None:
             if progress:
-                progress(f"正在从 GLM 切回 {self.settings.profiles[fallback].display_name}")
+                progress(f"正在从 {self.settings.profiles[active].display_name} 切回 {self.settings.profiles[fallback].display_name}")
             switched = self.switch_profile(fallback, progress)
         self.save()
         return switched, status
@@ -333,13 +343,20 @@ class ApplicationController:
         model = snapshot.model.casefold()
         provider_key_cf = provider_key.casefold()
         provider_name = str(provider.get("name", "")).casefold()
+        candidates = [
+            pid for pid in ("relay1", "relay2", "glm", "deepseek")
+            if base_url and self.settings.profiles[pid].base_url.rstrip("/").casefold() == base_url
+        ]
+        if candidates:
+            cached = self.settings.active_profile_id
+            return cached if cached in candidates else candidates[0]
+        if urllib.parse.urlsplit(base_url).hostname == "api.deepseek.com":
+            return "deepseek"
         # A manually edited config may use a custom provider key. Prefer an
         # exact configured key match before falling back to endpoint matching.
-        for profile_id in ("relay1", "relay2", "glm"):
+        for profile_id in ("relay1", "relay2", "glm", "deepseek"):
             profile = self.settings.profiles[profile_id]
             if profile.provider_key and provider_key_cf == profile.provider_key.casefold():
-                return profile_id
-            if profile.base_url.rstrip("/").casefold() == base_url and base_url:
                 return profile_id
         # GLM can be manually renamed and may use a stable provider label, so
         # identify it from the endpoint/key/name as a fallback. Endpoint
@@ -352,11 +369,13 @@ class ApplicationController:
             or "智谱" in provider_name
         ):
             return "glm"
+        if model.startswith("deepseek-") or provider_key_cf == "deepseek":
+            return "deepseek"
         # API1/API2 are occasionally configured with the same endpoint. In
         # that ambiguous case the cached profile is only used if it still
         # describes the actual config; it never overrides a distinct config.
         cached = self.settings.active_profile_id
-        if cached in {"relay1", "relay2", "glm"}:
+        if cached in {"relay1", "relay2", "glm", "deepseek"}:
             cached_profile = self.settings.profiles.get(cached)
             if cached_profile is not None and (
                 cached_profile.provider_key.casefold() == provider_key_cf
@@ -412,11 +431,15 @@ class ApplicationController:
             )
         api_key = self.credentials.get(profile_id, "")
         catalog_path: Path | None = None
-        if profile.kind == "glm":
+        if profile_id in NATIVE_PROFILE_IDS:
             if progress:
-                progress("正在校验 GLM 模型目录")
-            self.catalog.ensure_model_profile(profile.model)
-            catalog_path = self.catalog.target_path
+                progress(f"正在校验 {profile.display_name} 模型目录")
+            catalog = self.catalog_for(profile_id)
+            catalog.ensure_model_profile(profile.model)
+            payload, _ = validate_catalog_text(catalog.current_text())
+            if not any(item["slug"] == profile.model for item in payload["models"]):
+                raise CatalogError(f"模型目录未包含 {profile.model}，请先在“配置预览及调整”添加该模型。")
+            catalog_path = catalog.target_path
 
         result = OperationResult(profile_id=profile_id, provider_key="")
         if progress:
@@ -438,6 +461,8 @@ class ApplicationController:
         result.provider_key = provider_key
         result.backup_path = backup
         self.settings.active_profile_id = profile_id
+        if profile_id in NATIVE_PROFILE_IDS:
+            self.settings.native_profile_id = profile_id
         if profile_id in {"relay1", "relay2"}:
             self.settings.last_relay_profile_id = profile_id
         self.save()
@@ -570,7 +595,11 @@ class ApplicationController:
                     record.latency_ms,
                     checked_at,
                 ),
-                quota_message="额度请使用卡片上的“查额度”单独查询",
+                quota_message=(
+                    "未配置额度查询接口"
+                    if profile_id == "deepseek" and not self.settings.profiles[profile_id].quota_url
+                    else "额度请使用卡片上的“查额度”单独查询"
+                ),
             )
         return result
 

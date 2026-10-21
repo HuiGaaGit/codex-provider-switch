@@ -1,8 +1,41 @@
 # 11CodexAPI供应商开关
 
-Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、中转 1、中转 2 与 GLM 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
+Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、API1、API2 与可选的 GLM / DeepSeek 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
 
-当前交付版本：`1.3.9`
+当前交付版本：`1.3.11`
+
+## 下载 1.3.11
+
+- [Windows x64 安装包（推荐）](https://github.com/HuiGaaGit/codex-provider-switch/releases/download/v1.3.11/Codex-Provider-Switch-Setup-1.3.11.exe)
+- [Windows x64 便携版](https://github.com/HuiGaaGit/codex-provider-switch/releases/download/v1.3.11/Codex-Provider-Switch-1.3.11.exe)
+- [发布页面](https://github.com/HuiGaaGit/codex-provider-switch/releases/tag/v1.3.11) · [更新说明与校验值](docs/releases/v1.3.11.md)
+
+安装包不包含任何用户 Key 或官方账号凭据。在原 Windows 用户下升级并沿用原 Codex Home，可继续使用已保存的供应商档案；换电脑需要重新填写 Key。
+
+## 本次更新
+
+1.3.11 增加 DeepSeek 官方 Responses 接入。总览第四个入口通过“模型 API”选择 GLM 或 DeepSeek；选择只改变展示档案，点击卡片上的“切换”才应用配置。旧 GLM 的地址、模型、加密 Key 和团队额度设置保留，两者可以分别配置。
+
+## GLM / DeepSeek 可选入口
+
+- 首次部署和“供应商配置”均可填写 DeepSeek Key。默认地址 `https://api.deepseek.com`，默认模型 `deepseek-flash`（支持图片输入），另提供 `deepseek-v4-pro`（文字输入）。供应商配置中的模型名可编辑。
+- DeepSeek 与 GLM 的模型目录分别为当前 Codex Home 下的 `models-deepseek.json`、`models-glm.json`。“配置预览及调整”中通过供应商选择器独立读取、恢复内置、编辑和保存，切换目录时提示处理未保存内容。
+- DeepSeek 使用 `wire_api = "responses"`、自身 bearer Key 和 `requires_openai_auth = false`；默认推理 `high`，禁用内置搜索，清理中转 Fast mode 和 AP1 图像扩展字段。官方账号登录凭据保持独立。
+- DeepSeek 所需的 API 登录偏好、搜索、原始推理显示和桌面推理档位会先做非敏感快照；切到 GLM、API1、API2 或官方直连时恢复原值，避免登录方式或搜索设置残留。
+- 健康与 Token 统计继续读取实际 Codex 请求，不定时探测所有供应商。DeepSeek 默认不查询中转 `/v1/usage`，不显示按量金额；未配置套餐额度接口时不提供额度按钮。
+- 旧设置自动补充 DeepSeek 档案，不复制 GLM Key。原生 DeepSeek 配置导入时只归入 DeepSeek，避免其 Key 被误存为 API1。
+
+官方依据：[Codex 接入](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/)、[Responses API](https://api-docs.deepseek.com/zh-cn/guides/responses_api/)、[模型元数据](https://api-docs.deepseek.com/zh-cn/api/list-models/)。模型目录能力按 2026-10-21 文档整理；Pro 不声明图片输入。
+
+本版本已通过本地回归及真实 Codex 离线配置加载验证。未提供 DeepSeek Key，因此未进行真实推理和计费请求测试。
+
+DeepSeek 配置步骤：
+
+1. 在“供应商配置”选择 DeepSeek，保留自动填入的官方地址，填写自己的 DeepSeek API Key，选择模型并保存。
+2. 在总览“模型 API”中选择 DeepSeek，再点击卡片上的“切换”。只改变下拉框不会切换 Codex 当前连接。
+3. 如需返回 GLM，选择 GLM 后点击切换即可；已保存的 GLM Key、团队额度设置和模型目录不会被 DeepSeek 覆盖。
+
+1.3.10 从各供应商的“恢复当前默认”配置中移除 `[features.multi_agent_v2]` 自定义提示段。截图中的 `usage_hint_text` 只覆盖子智能体使用提示，删除后使用 Codex 内置策略；不会改动模型、认证和供应商链路。该次按用户要求未执行运行验证。
 
 1.3.9 修复部署页官方登录态按钮：检测到 ChatGPT 官方登录态但当前仍使用中转时，明确显示“当前未启用 OpenAI 直连”，并保持“登录并切换直连”可用；本地刷新、监控失败或并发任务结束后也会重新同步按钮状态。
 
@@ -14,10 +47,10 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 
 1. 自动定位 `%USERPROFILE%\.codex\config.toml`，也可手动选择其他 Codex Home。
 2. 导入原 `model_provider`、模型、供应商地址与旧版中转设置；中转 1 / 2 可只配置其中一个，未配置项会在总览中禁用。
-3. 检测 OpenAI 官方登录态，选择是否保留它供后续 OpenAI 直连使用；API1、API2、GLM 始终使用各自独立 API Key。确认稳定 provider 标签、注入 `models.json`，并检测或一键安装 Codex Threadripper。
+3. 检测 OpenAI 官方登录态，选择是否保留它供后续 OpenAI 直连使用；API1、API2、GLM、DeepSeek 使用各自的 API Key。确认稳定 provider 标签，按选择注入 `models-glm.json` 或 `models-deepseek.json`，并检测或一键安装 Codex Threadripper。
 4. 选择首次启用的供应商，备份并写入配置。
 
-完成部署后默认进入总览，只保留四个一键切换入口和健康、额度、Token 摘要。供应商详情、模型目录、Threadripper、官方登录态与高级设置分别位于独立功能区。关闭主窗口时默认缩入 Windows 系统托盘；健康检查仅在启动、切换完成或手动刷新时检查当前供应商，托盘菜单可恢复窗口、立即刷新或彻底退出。Windows 优先使用 PySide6 液态毛玻璃界面，缺少 Qt 运行库时回退到 Tk 界面。
+完成部署后默认进入总览，保留 OpenAI、API1、API2 和可选 GLM / DeepSeek 共四个切换入口，以及健康、额度、Token 摘要。供应商详情、模型目录、Threadripper、官方登录态与高级设置分别位于独立功能区。关闭主窗口时默认缩入 Windows 系统托盘；健康监控读取 Codex 实际请求记录，刷新不会主动发起模型请求或定时探测各供应商。托盘菜单可恢复窗口、立即刷新或彻底退出。Windows 优先使用 PySide6 液态毛玻璃界面，缺少 Qt 运行库时回退到 Tk 界面。
 
 ## 切换与历史兼容
 
@@ -29,7 +62,7 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 - aqyimin.chat GPT 中转：只有 API1 地址的主机属于 `aqyimin.chat`（含 `www` 和子域名）时，切回该供应商才恢复原配置中的 GPT 模型、图像能力相关模型目录和推理配置；切换 GLM 时使用独立的 `models-glm.json`，不再污染 API1 原来的 `models.json`。旧版本留下的歧义 `models.json` 备份不会被恢复到 API1。API1 改成其他供应商 URL 后，完全按 API2 的通用中转策略处理，并清理残留的 AP1 专用字段。
 - AP1 认证兼容：aqyimin.chat 始终使用自己的 bearer/API Key，启动时会把旧配置误写的 `requires_openai_auth = true` 修正为 `false`，并只在缺失时补齐 `features.image_generation` 与 `local-image-extension` 头；明确的人工禁用或自定义值会保留。
 - 图像调用边界：AP1 的 Codex 图像扩展/图片输入与 GPT Image 2 本地生成命令是两条链路。后者由 OpenAI Platform API 凭据驱动，按官方文档读取独立的 `OPENAI_API_KEY`；切换器不会把 AP1/GLM Key 复制到该环境变量。
-- API1 / API2 / GLM 之间切换时直接断开旧路由并写入新配置，不再弹出“保留共存”选择；涉及 OpenAI 直连时仍保留确认提示。
+- API1 / API2 / GLM / DeepSeek 之间切换时直接写入目标路由，不再弹出“保留共存”选择；涉及 OpenAI 直连时仍保留确认提示。
 - GLM 切换会清掉旧配置里遗留的 `env_key` 和 `http_headers`（尤其是 `OPENAI_API_KEY`、`x-openai-actor-authorization`），避免认证来源歧义和应用专用请求头破坏 GLM 流式响应；`experimental_bearer_token` 是唯一认证来源。
 - 保留官方登录态与 GLM 不冲突：GLM 始终写入 `requires_openai_auth = false` 并使用自己的 bearer token；官方凭据缓存保持不变，切回 OpenAI 时继续使用。
 - “保持同一 provider 标签”默认开启。第三方供应商切换时复用首次读取到的 provider key（本机当前为 `cch_gz`），避免新会话按多个标签分裂。
@@ -39,15 +72,17 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 - 如果 Threadripper 可用，切换后自动同步并校验会话索引。工具页也可随时手动同步。
 - 自动重启默认开启。重启助手只结束 Codex 应用进程，不再使用进程树终止；配置始终先保存、验证，再尝试重启，因此从 Codex 内打开本工具时也不会被一同关闭。
 
-## GLM 模型目录
+## 模型目录与配置预览
 
-软件内置用户提供的 `models.json`，当前包含：
+GLM 内置目录来自用户提供的 `models.json`，当前包含：
 
 - `glm-5.3`
 - `glm-5.3-flash`（默认模型；内置目录声明 `text + image`，切换后可直接使用图片输入）
 - `glm-5-turbo`
 
-“配置预览及调整”功能区分为上下两部分。上半部分是 GLM `models.json`：支持读取本机文件、恢复内置版本、直接编辑、JSON/模型字段校验和一键保存注入。下半部分是当前 `config.toml`：支持读取、按当前供应商恢复默认模板、TOML 校验、人工调整和保存；恢复默认只载入编辑器，确认后再保存。保存时会备份原文件，并把当前供应商名称、地址、模型、认证策略和 bearer token 同步回本机供应商档案，后续一键切换会保留这些兼容调整。
+DeepSeek 使用独立内置目录，包含 `deepseek-flash`（默认，文字及图片输入）和 `deepseek-v4-pro`（文字输入）。
+
+“配置预览及调整”功能区分为上下两部分。上半部分通过供应商选择器独立编辑 GLM / DeepSeek 模型目录，支持读取本机文件、恢复内置版本、直接编辑、JSON/模型字段校验和一键保存注入。下半部分是当前 `config.toml`：支持读取、按当前供应商恢复默认模板、TOML 校验、人工调整和保存；恢复默认只载入编辑器，确认后再保存。保存时会备份原文件，并把当前供应商名称、地址、模型、认证策略和 bearer token 同步回本机供应商档案，后续一键切换会保留这些兼容调整。
 
 默认 GLM 配置为：
 
@@ -70,13 +105,14 @@ experimental_bearer_token = "<本机保存的 Key>"
 
 ## 健康与用量
 
-- OpenAI 直连：检查 OpenAI 网络和 `codex login status`；只有 ChatGPT/官方账号凭据会解锁直连按钮，API Key 只显示为检测到的凭据，不作为官方账号登录态。
-- API1 / API2：使用当前 Key 请求 OpenAI 兼容 `/models`，显示正常、认证失败、限流、不可达和延迟。
-- GLM：优先查询 Coding Plan 配额接口，并以 `/models` 校验实际模型链路；个人套餐留空组织/项目 ID，团队套餐必须同时填写 `org-...` 和 `proj-...`，软件会自动改用团队额度请求。
+- 健康监控：读取当前供应商的 Codex 实际请求记录，显示可用率、错误率及平均首响应时间（秒）；没有记录时不把主动探测结果当成实际请求。启动、切换及刷新界面均不会定时探测全部供应商。
+- OpenAI 直连：官方登录检查通过 `codex login status` 单独执行；只有 ChatGPT/官方账号凭据会解锁直连按钮，API Key 不作为官方账号登录态。
+- API1 / API2 / DeepSeek：手动连通性检查使用对应 Key 请求兼容 `/models`，与实际请求监控、仅查询额度操作分开。
+- GLM：额度查询使用 Coding Plan 配额接口；个人套餐留空组织/项目 ID，团队套餐必须同时填写 `org-...` 和 `proj-...`，软件会自动改用团队额度请求。
 - GLM Coding Plan Key 可显示 5 小时和周额度及重置时间。普通按量 Key 可以正常调用模型，但官方接口会返回“不存在 Coding Plan”，此时只显示链路健康，不伪造剩余额度。
 - API2 / Sub2API 网关默认自动请求 `/v1/usage?days=30`；接口只返回钱包余额、没有套餐总量时不显示无意义的剩余金额，界面会明确提示无法计算百分比。其它中转可在供应商页配置专用额度 URL 与 JSON 字段路径。API1 当前网关未开放可用的 Key 级额度接口，软件会明确提示，而不是伪造数值。
 - 供应商卡片的“查额度”只查询已保存 Key 的额度接口，不切换当前供应商，也不发起模型链路探测；API1/API2 会查询配置的 `/v1/usage?days=30`，未使用中的 GLM 也可以单独查询并保留结果。
-- Token 统计扫描当前 Codex Home 的本机会话 JSONL，每个会话只取最后一条累计 token 事件，默认汇总近 30 天 input、output、cache 与总量；界面统一以 M（百万 token）显示。
+- Token 统计扫描当前 Codex Home 的会话与归档 JSONL，按每条累计 `token_count` 的增量、事件时间和供应商切换记录归属用量，支持选择时间范围，默认近 30 天。缓存输入属于输入 Token，不重复加到总量；界面统一以 M（1 M = 1,000,000 tokens）和千分位显示。此统计是本机日志用量，不是供应商账单或余额。
 - 系统托盘提示当前供应商、链路状态和统计窗口内的 Token 总量；仅在异常发生变化或全部恢复时通知，不会每轮监控重复弹窗。
 - 主窗口右下角只显示操作状态，不再显示 `config.toml` 路径。
 - 监控页不再显示供应商可用性时间线或监控条区域，只保留基于实际请求记录的健康摘要、平均首响应时间、错误率和 Token 仪表盘。
@@ -95,12 +131,15 @@ experimental_bearer_token = "<本机保存的 Key>"
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
 - `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.3.9.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.9.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.9.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.9.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/assets/models-deepseek.json`：内置 DeepSeek 模型目录。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.11.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.11.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.11.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.11.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
 
 ## 验证与打包
+
+1.3.11 已通过 104 项测试、Qt/托盘与 Tk 向导冒烟、真实 Codex 离线配置加载及安装/卸载检查。验证均使用隔离临时目录；未取得真实 DeepSeek Key，未验证真实推理请求。详细范围与产物 SHA-256 见[发布说明](docs/releases/v1.3.11.md)。
 
 在 `work\codex_api_provider_switch` 下运行：
 
@@ -109,16 +148,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.9.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.9.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.11.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.11.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.9.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.9.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.9.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.11.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.11.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.11.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 

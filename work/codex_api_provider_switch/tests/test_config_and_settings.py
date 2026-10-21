@@ -631,7 +631,7 @@ class SettingsAndCatalogTests(unittest.TestCase):
                 "auto_restart": True,
             }
         )
-        self.assertEqual(7, settings.schema_version)
+        self.assertEqual(8, settings.schema_version)
         self.assertFalse(settings.auto_restart)
 
     def test_new_install_restarts_by_default_after_safe_helper_fix(self) -> None:

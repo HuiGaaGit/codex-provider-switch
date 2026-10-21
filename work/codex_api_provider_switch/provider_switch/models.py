@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .constants import (
+    DEEPSEEK_DEFAULT_BASE_URL,
+    DEEPSEEK_DEFAULT_MODEL,
     GLM_DEFAULT_BASE_URL,
     GLM_DEFAULT_MODEL,
     GLM_DEFAULT_QUOTA_URL,
@@ -72,12 +74,20 @@ def default_profiles() -> dict[str, ProviderProfile]:
             model=GLM_DEFAULT_MODEL,
             quota_url=GLM_DEFAULT_QUOTA_URL,
         ),
+        "deepseek": ProviderProfile(
+            profile_id="deepseek",
+            display_name="DeepSeek",
+            kind="deepseek",
+            provider_key="deepseek",
+            base_url=DEEPSEEK_DEFAULT_BASE_URL,
+            model=DEEPSEEK_DEFAULT_MODEL,
+        ),
     }
 
 
 @dataclass(slots=True)
 class AppSettings:
-    schema_version: int = 7
+    schema_version: int = 8
     setup_complete: bool = False
     codex_home: str = ""
     preserve_provider_key: bool = True
@@ -91,6 +101,7 @@ class AppSettings:
     active_profile_id: str = ""
     retain_official_auth: bool = True
     last_relay_profile_id: str = "relay1"
+    native_profile_id: str = "glm"
     profiles: dict[str, ProviderProfile] = field(default_factory=default_profiles)
 
     def to_dict(self) -> dict[str, Any]:
@@ -119,6 +130,7 @@ class AppSettings:
             "active_profile_id",
             "retain_official_auth",
             "last_relay_profile_id",
+            "native_profile_id",
         )
         for name in scalar_fields:
             if name in data:
@@ -155,6 +167,11 @@ class AppSettings:
             if glm is not None and glm.model == "glm-5.3":
                 glm.model = "glm-5.3-flash"
             settings.schema_version = 7
+        if settings.native_profile_id not in {"glm", "deepseek"}:
+            settings.native_profile_id = "glm"
+        if "native_profile_id" not in data and settings.active_profile_id == "deepseek":
+            settings.native_profile_id = "deepseek"
+        settings.schema_version = 8
         return settings
 
 

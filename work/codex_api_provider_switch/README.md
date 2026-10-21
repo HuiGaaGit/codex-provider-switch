@@ -1,6 +1,13 @@
-# Codex Provider Switch v1.3.9
+# Codex Provider Switch v1.3.11
 
 源码入口：`codex_api_provider_switch.py`
+
+## 下载与配置
+
+- [1.3.11 发布页面与安装包](https://github.com/HuiGaaGit/codex-provider-switch/releases/tag/v1.3.11)
+- [发布说明与 SHA-256](../../docs/releases/v1.3.11.md)
+
+DeepSeek 已内置官方 API 地址 `https://api.deepseek.com`。在“供应商配置”保存自己的 DeepSeek Key 后，到总览“模型 API”选择 DeepSeek 并点击切换；只切换下拉框不会改变当前 Codex 路由。GLM / DeepSeek 的 Key、模型目录与设置独立保存。
 
 ## 开发验证
 
@@ -14,12 +21,35 @@ python codex_api_provider_switch.py --tray-smoke-test
 ## 打包
 
 ```powershell
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.9.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.9.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.11.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.11.iss"
 .\installer\verify_install.ps1
 ```
 
-打包配置会内置 `assets/` 下的 Tabler 衍生窗口图标、第三方许可、重启助手和 GLM `models.json`。安装注入使用独立的 `models-glm.json`，避免污染 GPT 中转的模型目录。单文件产物为 `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.9.exe`，安装包为同目录下的 `Codex Provider Switch-Setup-1.3.9.exe`。安装版支持系统托盘常驻和可选开机后台监控。版本号的运行时事实源为 `provider_switch/constants.py`，Windows 文件版本由 `assets/version_info-1.3.9.txt` 提供。
+安装包内置图标、许可、重启助手、GLM 和 DeepSeek 模型目录；分别注入 `models-glm.json`、`models-deepseek.json`。便携版为 `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.11.exe`，安装包为同目录 `Codex Provider Switch-Setup-1.3.11.exe`。运行版本来自 `provider_switch/constants.py`，文件版本来自 `assets/version_info-1.3.11.txt`。保留全部旧版产物。
+
+## 1.3.11 变更
+
+- 将总览固定 GLM 位置改为可选择 GLM / DeepSeek 的“模型 API”卡片。两份档案、加密 Key 和模型目录独立保存；仅选择不会修改 Codex 当前路由。
+- DeepSeek 按官方 Codex 文档使用原生 Responses，默认 `deepseek-flash`（text/image），另包含 `deepseek-v4-pro`（text）。独立模型目录支持编辑保存，避免混入 GLM/GPT 模型。
+- DeepSeek 默认推理 high，停用 Fast mode 与 AP1 图像头；进入前保存登录偏好、搜索、原始推理显示及桌面推理档位的非敏感快照，离开时恢复。保留官方登录文件。
+- 首次部署、默认配置预览、Qt/Tk 和真实请求监控支持 DeepSeek。不会把 DeepSeek Key 复制给 API1，也不请求其不存在的中转额度接口。
+- 隔离回归测试、Qt/托盘冒烟，以及 `scripts/verify_deepseek_local.py` 调用真实 Codex `features list` 的离线配置加载检查。未使用真实 DeepSeek Key，未验证真实推理请求。
+- 文档与模型能力参考：https://api-docs.deepseek.com/quick_start/agent_integrations/codex/ 、https://api-docs.deepseek.com/zh-cn/api/list-models/ （2026-10-21）。
+- 最终验证：104 项测试通过；Qt/托盘与 Tk 向导冒烟通过；真实 Codex 离线加载 DeepSeek/GLM/API1 配置通过；安装、安装版启动/托盘及卸载检查全部退出 0。
+- SHA-256：便携版 `49233C064F80B040105B7AD16818A76938FCE2743862DB5BA75400E365B81256`；安装包 `E1B833FAC11D02D62E2B9DB76E852374853CE9C6DF8B5B20B1DABBB44B71185A`。
+
+离线配置加载与界面预览（全部数据位于临时目录）：
+
+```powershell
+python scripts/verify_deepseek_local.py --codex "C:/完整路径/codex.exe" --preview-dir "../../outputs/codex_api_provider_switch/audit-1.3.11"
+```
+
+## 1.3.10 变更
+
+- 各供应商“恢复当前默认”时移除 `[features.multi_agent_v2]` 自定义提示段，使用 Codex 内置子智能体提示。普通供应商切换继续保留人工配置。
+- 根据字段作用判断，此改动不影响 Codex 启动、模型选择和供应商认证；按用户要求未执行运行测试。
+- 1.3.10 已完成便携版与安装包构建。SHA-256：便携版 `2CA86FA54B3329FBAA042F670083C36B7C8723488C03A7F68E2FF1F1B13D3CA9`；安装包 `2256CF0624E2A780612D1589D48378A7CE0A3D0024484EE7886987B338FEA541`。
 
 ## 1.3.9 变更
 

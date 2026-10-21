@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 APP_NAME = "Codex Provider Switch"
-APP_VERSION = "1.3.9"
+APP_VERSION = "1.3.11"
 APP_SLUG = "codex-provider-switch"
 
 DEFAULT_CODEX_HOME = Path.home() / ".codex"
@@ -18,6 +18,11 @@ MONITOR_HISTORY_DIRECTORY_NAME = "monitor-history"
 BACKUP_DIRECTORY_NAME = "provider-switch-backups"
 MODEL_CATALOG_NAME = "models.json"
 GLM_CATALOG_NAME = "models-glm.json"
+DEEPSEEK_CATALOG_NAME = "models-deepseek.json"
+DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-flash"
+NATIVE_PROFILE_IDS = ("glm", "deepseek")
+PROFILE_IDS = ("openai", "relay1", "relay2", *NATIVE_PROFILE_IDS)
 
 THREADRIPPER_NAME = "codex-threadripper"
 THREADRIPPER_REPOSITORY = "Wangnov/codex-threadripper"
@@ -67,6 +72,7 @@ COLORS = {
     "relay1": "#1879b8",
     "relay2": "#c06a1b",
     "glm": "#7257b5",
+    "deepseek": "#4866d5",
 }
 
 
