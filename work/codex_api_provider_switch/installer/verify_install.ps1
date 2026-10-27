@@ -1,10 +1,14 @@
 param(
-    [string]$SetupPath = ""
+    [string]$SetupPath = "",
+    [string]$ExeName = "Codex Provider Switch.exe"
 )
 
 $ErrorActionPreference = "Stop"
-$version = "1.3.11"
-$exeName = "Codex Provider Switch.exe"
+$version = "1.3.12"
+$exeName = $ExeName
+if ($ExeName -eq "Codex Provider Switch.exe" -and @(Get-Process -Name 'Codex Provider Switch*' -ErrorAction SilentlyContinue).Count) {
+    throw "An existing app is running. Use an isolated validation installer and -ExeName instead of stopping the user's app."
+}
 if (-not $SetupPath) {
     $SetupPath = Join-Path $PSScriptRoot "..\..\..\outputs\codex_api_provider_switch\Codex Provider Switch-Setup-$version.exe"
 }
@@ -27,7 +31,7 @@ try {
         "/NORESTART",
         "/SP-",
         "/DIR=$testDirectory"
-    ) -Wait -PassThru
+    ) -Wait -PassThru -WindowStyle Hidden
     $installExit = $install.ExitCode
     if ($installExit -ne 0 -or -not (Test-Path -LiteralPath $installedExe)) {
         throw "Installer validation failed with exit code $installExit."
@@ -36,11 +40,14 @@ try {
         throw "Third-party notices were not installed."
     }
 
-    $versionProcess = Start-Process -FilePath $installedExe -ArgumentList "--version" -Wait -PassThru
+    if ((Get-Item -LiteralPath $installedExe).VersionInfo.FileVersion -ne $version) {
+        throw "Installed executable version does not match $version."
+    }
+    $versionProcess = Start-Process -FilePath $installedExe -ArgumentList "--version" -Wait -PassThru -WindowStyle Hidden
     $versionExit = $versionProcess.ExitCode
-    $smoke = Start-Process -FilePath $installedExe -ArgumentList "--smoke-test" -Wait -PassThru
+    $smoke = Start-Process -FilePath $installedExe -ArgumentList "--smoke-test" -Wait -PassThru -WindowStyle Hidden
     $smokeExit = $smoke.ExitCode
-    $tray = Start-Process -FilePath $installedExe -ArgumentList "--tray-smoke-test" -Wait -PassThru
+    $tray = Start-Process -FilePath $installedExe -ArgumentList "--tray-smoke-test" -Wait -PassThru -WindowStyle Hidden
     $trayExit = $tray.ExitCode
     if (@($versionExit, $smokeExit, $trayExit).Where({ $_ -ne 0 }).Count -gt 0) {
         throw "An installed executable validation command failed."
@@ -52,7 +59,7 @@ finally {
             "/VERYSILENT",
             "/SUPPRESSMSGBOXES",
             "/NORESTART"
-        ) -Wait -PassThru
+        ) -Wait -PassThru -WindowStyle Hidden
         $uninstallExit = $uninstall.ExitCode
     }
 }

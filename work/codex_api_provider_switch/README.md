@@ -1,13 +1,24 @@
-# Codex Provider Switch v1.3.11
+# Codex Provider Switch v1.3.12
 
 源码入口：`codex_api_provider_switch.py`
 
 ## 下载与配置
 
-- [1.3.11 发布页面与安装包](https://github.com/HuiGaaGit/codex-provider-switch/releases/tag/v1.3.11)
-- [发布说明与 SHA-256](../../docs/releases/v1.3.11.md)
+- [下载 1.3.12 安装包（推荐）](https://github.com/HuiGaaGit/codex-provider-switch/releases/download/v1.3.12/Codex-Provider-Switch-Setup-1.3.12.exe)
+- [下载 1.3.12 便携版](https://github.com/HuiGaaGit/codex-provider-switch/releases/download/v1.3.12/Codex-Provider-Switch-1.3.12.exe)
+- [发布页面](https://github.com/HuiGaaGit/codex-provider-switch/releases/tag/v1.3.12) · [交付说明与 SHA-256](../../docs/releases/v1.3.12.md)
 
 DeepSeek 已内置官方 API 地址 `https://api.deepseek.com`。在“供应商配置”保存自己的 DeepSeek Key 后，到总览“模型 API”选择 DeepSeek 并点击切换；只切换下拉框不会改变当前 Codex 路由。GLM / DeepSeek 的 Key、模型目录与设置独立保存。
+
+## 1.3.12 变更
+
+- 接入 DeepSeek 官方 `GET https://api.deepseek.com/user/balance`，使用自身 Bearer Key，显示币种、可用总余额、赠送/充值余额及查询时间。
+- 总览增加“查余额”，供应商配置增加“仅查询余额”。旧官方 DeepSeek 档案无需重新部署，也不要求已切换或已选模型。自定义 API 地址必须显式填写兼容余额接口。
+- 金额使用 Decimal、千分位和两位小数；不同币种不合并，不生成百分比或消费估算。零余额、空数据、错误响应、认证失败与限流分别处理，不回显 Key。
+- 移除监控页面、导航、Token 仪表盘及总览统计，不再自动读取请求或扫描 Token；保留托盘驻留、手动链路测试、GLM 与 API1/API2 额度查询，原日志和设置不删除。
+- 查询余额不改 config/auth、不重启、不发起模型请求；配置刷新保留查询结果，Key/地址变化后丢弃旧请求结果。
+- 116 项测试、源码编译、Qt/托盘与 Tk 向导冒烟及默认/小窗口余额截图检查通过。安装测试采用独立 AppId、程序名和临时目录，不关闭用户已运行的旧程序。
+- 本机无已保存的官方 DeepSeek Key，尚未实测真实账户余额或真实推理。旧版更新记录中的“监控”描述不再适用于 1.3.12。
 
 ## 开发验证
 
@@ -21,12 +32,12 @@ python codex_api_provider_switch.py --tray-smoke-test
 ## 打包
 
 ```powershell
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.11.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.11.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.12.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.12.iss"
 .\installer\verify_install.ps1
 ```
 
-安装包内置图标、许可、重启助手、GLM 和 DeepSeek 模型目录；分别注入 `models-glm.json`、`models-deepseek.json`。便携版为 `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.11.exe`，安装包为同目录 `Codex Provider Switch-Setup-1.3.11.exe`。运行版本来自 `provider_switch/constants.py`，文件版本来自 `assets/version_info-1.3.11.txt`。保留全部旧版产物。
+安装包内置图标、许可、重启助手、GLM 和 DeepSeek 模型目录；分别注入 `models-glm.json`、`models-deepseek.json`。便携版为 `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.12.exe`，安装包为同目录 `Codex Provider Switch-Setup-1.3.12.exe`。运行版本来自 `provider_switch/constants.py`，文件版本来自 `assets/version_info-1.3.12.txt`。保留全部旧版产物。
 
 ## 1.3.11 变更
 
@@ -76,7 +87,7 @@ python scripts/verify_deepseek_local.py --codex "C:/完整路径/codex.exe" --pr
 
 快照不会保存 bearer/API key、`env_key`、插件/MCP 或浏览器运行时配置；若原配置已有自定义模型目录，只会按原有逻辑记录该目录路径以便恢复。API key 始终从本地加密凭据库写入当前 provider 表；因此可以把用户的 AP1 配置作为参考，不需要把原始 `config.toml` 纳入安装包或仓库。
 
-监控面板不再显示供应商可用性时间线或条形监控区域；只展示基于 Codex 实际请求记录计算的可用性、错误率、平均首响应时间和 Token 仪表盘。刷新只读取本地记录，不会定时探测未使用的供应商。
+1.3.12 已移除监控面板、Token 仪表盘与自动扫描，仅保留手动余额/额度查询和链路测试；历史日志不删除。
 
 ## 图像调用边界
 

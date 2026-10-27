@@ -43,12 +43,12 @@ from PySide6.QtWidgets import (
 )
 
 from .auth_manager import AuthStatus
+from .balances import format_balance_summary
 from .catalog import resource_path, validate_catalog_text
 from .constants import APP_NAME, APP_VERSION, NATIVE_PROFILE_IDS, PROFILE_IDS
 from .config_manager import ConfigError, ConfigManager
 from .controller import ApplicationController, OperationResult
 from .models import ConfigSnapshot, ProviderProfile, ProviderTelemetry, TokenUsage
-from .monitor_history import HealthRecord, MonitorHistory, ProviderSummary
 from .monitoring import check_provider
 from .threadripper import install_threadripper
 
@@ -205,16 +205,12 @@ class ProviderCard(GlassPanel):
         heading.addWidget(self.active_pill)
         root.addLayout(heading)
 
-        self.health = QLabel("等待首次健康检查")
+        self.health = QLabel("正在读取供应商配置")
         self.health.setProperty("class", "body")
         self.health.setWordWrap(True)
         self.health.setMinimumHeight(21)
         root.addWidget(self.health)
 
-        self.usage = QLabel("近 30 天用量：暂无数据")
-        self.usage.setProperty("class", "muted")
-        self.usage.setWordWrap(True)
-        root.addWidget(self.usage)
         self.quota = QProgressBar()
         self.quota.setRange(0, 100)
         self.quota.setValue(0)
@@ -244,9 +240,10 @@ class ProviderCard(GlassPanel):
     def set_profile(self, profile: ProviderProfile) -> None:
         self.title.setText(profile.display_name)
         self.model.setText(profile.model or ("Codex 官方默认" if profile.kind == "official" else "尚未配置模型"))
-        self.quota_button.setVisible(profile.kind != "official" and (profile.kind != "deepseek" or bool(profile.quota_url)))
-        if profile.kind == "deepseek" and not profile.quota_url:
-            self.quota_text.setText("额度：未配置查询接口")
+        self.quota_button.setVisible(profile.kind != "official")
+        self.quota_button.setText("查余额" if profile.kind == "deepseek" else "查额度")
+        if profile.kind == "deepseek" and not self.quota_text.text().startswith("余额"):
+            self.quota_text.setText("余额：尚未查询")
 
     def _polish(self, widget: QWidget) -> None:
         widget.style().unpolish(widget)
@@ -299,23 +296,23 @@ class ProviderCard(GlassPanel):
     def clear_telemetry(
         self, *, active: bool = False, preserve_quota: bool = False
     ) -> None:
-        """Clear health data while optionally retaining the last quota result.
-
-        Health monitoring intentionally checks only the active provider. Quota
-        results are independent cached data, so switching providers must not
-        make a previously successful quota lookup disappear.
-        """
-        self.health.setText("等待当前供应商检查" if active else "尚未检查（仅检查当前供应商）")
+        """Refresh route labels without discarding manually queried balances."""
+        self.health.setText("当前使用的路由" if active else "已保存，待切换")
         self.health.setProperty("class", "body")
         if preserve_quota:
             return
         self.quota.setVisible(False)
         self.quota.setValue(0)
         self.quota.setToolTip("")
-        self.quota_text.setText("额度：尚未检查")
+        self.quota_text.setText("余额：尚未查询" if self.profile_id == "deepseek" else "额度：尚未查询")
 
     def set_telemetry(self, telemetry: ProviderTelemetry | None) -> None:
         if telemetry is None:
+            return
+        if telemetry.balance_checked_at:
+            self.quota.hide()
+            self.quota_text.setText(format_balance_summary(telemetry, details=True))
+            self.quota.setToolTip("")
             return
         health = telemetry.health
         tone = {
@@ -355,13 +352,6 @@ class ProviderCard(GlassPanel):
             self.quota.setToolTip(message)
             self.quota_text.setText(f"额度：{message}")
 
-    def set_usage(self, usage: TokenUsage | None, days: int) -> None:
-        if usage is None:
-            self.usage.setText(f"近 {days} 天用量：暂无本地会话数据")
-            return
-        self.usage.setText(
-            f"近 {days} 天：{_format_int(usage.total_tokens)} tokens / {usage.sessions} 个会话"
-        )
 
 
 APP_STYLE = """
@@ -475,64 +465,6 @@ QToolTip {
 """
 
 
-class TokenGaugeWidget(QWidget):
-    """Semicircular gauge showing token usage relative to peers."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._label = ""
-        self._tokens = 0
-        self._ratio = 0.0
-        self._color = QColor("#71d3ae")
-        self._sessions = 0
-        self.setMinimumSize(110, 168)
-
-    def set_data(self, label: str, tokens: int, ratio: float, color: str, sessions: int) -> None:
-        self._label = label
-        self._tokens = tokens
-        self._ratio = max(0.0, min(1.0, ratio))
-        self._color = QColor(color)
-        self._sessions = sessions
-        self.update()
-
-    def paintEvent(self, event: Any) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w = self.width()
-        margin = 10
-        pen_width = 9
-        arc_height = 58
-        arc_width = min(w - 2 * margin, 120)
-        rect = QRectF((w - arc_width) / 2, margin, arc_width, arc_height * 2)
-        # Background arc (full semicircle)
-        bg_pen = QPen(QColor(255, 255, 255, 30), pen_width)
-        bg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(bg_pen)
-        painter.drawArc(rect, 0, 180 * 16)
-        # Foreground arc (ratio)
-        if self._ratio > 0.001:
-            fg_pen = QPen(self._color, pen_width)
-            fg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            painter.setPen(fg_pen)
-            span = int(180 * 16 * self._ratio)
-            painter.drawArc(rect, 180 * 16, -span)
-        # Text stack below the arc
-        painter.setPen(QColor("#ffffff"))
-        painter.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
-        text_top = margin + arc_height + 6
-        painter.drawText(QRectF(0, text_top, w, 24), Qt.AlignHCenter | Qt.AlignVCenter, _format_int(self._tokens))
-        painter.setPen(QColor("#8fa0aa"))
-        painter.setFont(QFont("Segoe UI", 8))
-        painter.drawText(QRectF(0, text_top + 24, w, 13), Qt.AlignHCenter | Qt.AlignVCenter, "tokens")
-        # Bottom label
-        painter.setPen(QColor("#c8d0d4"))
-        painter.setFont(QFont("Segoe UI", 9, QFont.Weight.Medium))
-        painter.drawText(QRectF(0, text_top + 37, w, 16), Qt.AlignHCenter | Qt.AlignVCenter, self._label)
-        if self._sessions > 0:
-            painter.setPen(QColor("#687178"))
-            painter.setFont(QFont("Segoe UI", 7))
-            painter.drawText(QRectF(0, text_top + 53, w, 12), Qt.AlignHCenter | Qt.AlignVCenter, f"{self._sessions} 会话")
-        painter.end()
 
 
 class ProviderSwitchWindow(QMainWindow):
@@ -557,7 +489,6 @@ class ProviderSwitchWindow(QMainWindow):
 
         self._jobs: queue.Queue[tuple[Callable[[Any], None] | None, Any, BaseException | None]] = queue.Queue()
         self._busy_count = 0
-        self._monitoring_in_progress = False
         self._local_refresh_in_progress = False
         self._drag_origin: QPoint | None = None
         self._resize_origin: QPoint | None = None
@@ -565,8 +496,6 @@ class ProviderSwitchWindow(QMainWindow):
         self._resize_edges: tuple[bool, bool, bool, bool] | None = None
         self._force_exit = False
         self._tray_hint_shown = False
-        self._last_tray_issues: tuple[str, ...] = ()
-        self._latest_total_tokens = 0
         self._last_telemetry: dict[str, ProviderTelemetry] = {}
         self._telemetry_active_id: str | None = None
         self.cached_auth = AuthStatus("unknown", False, self.controller.codex_home / "auth.json")
@@ -575,16 +504,11 @@ class ProviderSwitchWindow(QMainWindow):
         self.provider_cards: dict[str, ProviderCard] = {}
         self._catalog_loaded = False
         self._config_loaded = False
-        self.monitor_history = MonitorHistory(
-            self.controller.codex_home / "codex-provider-switch" / "monitor-history"
-        )
-
         self._build_shell()
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self)
         self._build_dashboard()
-        self._build_monitoring_page()
         self._build_providers_page()
         self._build_catalog_page()
         self._build_tools_page()
@@ -597,8 +521,6 @@ class ProviderSwitchWindow(QMainWindow):
         self.job_timer = QTimer(self)
         self.job_timer.timeout.connect(self._drain_jobs)
         self.job_timer.start(90)
-        if start_monitor:
-            QTimer.singleShot(250, self.refresh_monitoring)
         if show_wizard and not self.controller.settings.setup_complete:
             QTimer.singleShot(300, self.open_setup_wizard)
 
@@ -626,8 +548,8 @@ class ProviderSwitchWindow(QMainWindow):
         brand_box.addWidget(brand)
         brand_box.addWidget(version)
         self.active_header = StatusPill("正在读取配置")
-        self.refresh_button = QPushButton("刷新监控")
-        self.refresh_button.clicked.connect(self.refresh_monitoring)
+        self.refresh_button = QPushButton("刷新配置")
+        self.refresh_button.clicked.connect(lambda: self.refresh_all(local_only=True))
         minimize = QPushButton("−")
         minimize.setFixedSize(34, 34)
         minimize.setToolTip("最小化")
@@ -655,7 +577,6 @@ class ProviderSwitchWindow(QMainWindow):
         nav_layout.setSpacing(5)
         destinations = (
             ("dashboard", "总览"),
-            ("monitoring", "监控面板"),
             ("providers", "供应商配置"),
             ("catalog", "配置预览及调整"),
             ("tools", "会话工具"),
@@ -700,13 +621,13 @@ class ProviderSwitchWindow(QMainWindow):
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
         tray = QSystemTrayIcon(self.app_icon, self)
-        tray.setToolTip(f"{APP_NAME} · 正在读取监控状态")
+        tray.setToolTip(f"{APP_NAME} {APP_VERSION}")
         menu = QMenu()
         show_action = QAction("打开控制台", menu)
         show_action.triggered.connect(self.restore_from_tray)
-        refresh_action = QAction("立即刷新监控", menu)
-        refresh_action.triggered.connect(self.refresh_monitoring)
-        exit_action = QAction("退出后台监控", menu)
+        refresh_action = QAction("刷新配置", menu)
+        refresh_action.triggered.connect(lambda: self.refresh_all(local_only=True))
+        exit_action = QAction("退出程序", menu)
         exit_action.triggered.connect(self.exit_application)
         menu.addAction(show_action)
         menu.addAction(refresh_action)
@@ -916,7 +837,7 @@ class ProviderSwitchWindow(QMainWindow):
         page, layout = self._page(
             "dashboard",
             "供应商总览",
-            "一眼查看当前路由、当前链路健康、额度和本地会话用量",
+            "切换当前路由，手动查询供应商额度与 DeepSeek 余额",
         )
         layout.setSpacing(8)
         self.dashboard_summary = QLabel("正在读取 Codex 配置…")
@@ -950,19 +871,11 @@ class ProviderSwitchWindow(QMainWindow):
         layout.addWidget(cards, 1)
 
         bottom = QHBoxLayout()
-        self.token_summary = GlassPanel()
-        token_layout = QVBoxLayout(self.token_summary)
-        token_layout.setContentsMargins(12, 9, 12, 9)
-        token_layout.addWidget(self._section_title("本地 Token 统计"))
-        self.token_text = QLabel("暂无会话数据")
-        self.token_text.setProperty("class", "body")
-        self.token_text.setWordWrap(True)
-        token_layout.addWidget(self.token_text)
         self.alert_summary = GlassPanel()
         alert_layout = QVBoxLayout(self.alert_summary)
         alert_layout.setContentsMargins(12, 9, 12, 9)
         alert_layout.addWidget(self._section_title("操作提示"))
-        self.alert_text = QLabel("健康详情集中在“监控面板”；切换完成后会按需检查当前供应商。")
+        self.alert_text = QLabel("余额和额度按需手动查询；查询不会切换路由，也不会测试或调用模型。")
         self.alert_text.setProperty("class", "body")
         self.alert_text.setWordWrap(True)
         alert_layout.addWidget(self.alert_text)
@@ -970,7 +883,6 @@ class ProviderSwitchWindow(QMainWindow):
         self.disconnect_others_button.setToolTip("清除配置中其他供应商的 bearer 连接字段，仅保留当前供应商")
         self.disconnect_others_button.clicked.connect(self.confirm_disconnect_others)
         alert_layout.addWidget(self.disconnect_others_button, 0, Qt.AlignLeft)
-        bottom.addWidget(self.token_summary, 1)
         bottom.addWidget(self.alert_summary, 1)
         layout.addLayout(bottom)
 
@@ -991,210 +903,14 @@ class ProviderSwitchWindow(QMainWindow):
         for pid in NATIVE_PROFILE_IDS:
             self.provider_cards[pid].setVisible(pid == selected)
 
-    def _build_monitoring_page(self) -> None:
-        page, layout = self._page(
-            "monitoring",
-            "监控面板",
-            "按需查看当前供应商请求健康、响应时间和 Token 使用量",
-        )
-        # Summary cards row
-        cards_row = QHBoxLayout()
-        cards_row.setSpacing(12)
-        self.monitor_availability_card = self._monitor_stat_card("系统可用性", "--")
-        self.monitor_latency_card = self._monitor_stat_card("平均延迟", "--")
-        self.monitor_error_card = self._monitor_stat_card("错误率", "--")
-        self.monitor_providers_card = self._monitor_stat_card("有监控记录供应商", "--")
-        cards_row.addWidget(self.monitor_availability_card, 1)
-        cards_row.addWidget(self.monitor_latency_card, 1)
-        cards_row.addWidget(self.monitor_error_card, 1)
-        cards_row.addWidget(self.monitor_providers_card, 1)
-        layout.addLayout(cards_row)
 
-        # Time range selector
-        range_row = QHBoxLayout()
-        range_row.setSpacing(6)
-        range_label = QLabel("时间范围")
-        range_label.setProperty("class", "muted")
-        range_row.addWidget(range_label)
-        self._monitor_range_group = QButtonGroup(self)
-        self._monitor_range_group.setExclusive(True)
-        ranges = (
-            ("15m", 15 * 60),
-            ("1h", 3600),
-            ("6h", 6 * 3600),
-            ("24h", 24 * 3600),
-            ("7d", 7 * 24 * 3600),
-        )
-        self._monitor_ranges: dict[str, float] = {}
-        for label, seconds in ranges:
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setFixedHeight(28)
-            btn.setProperty("class", "chip")
-            btn.clicked.connect(lambda checked=False, s=seconds: self._refresh_monitor_page())
-            self._monitor_range_group.addButton(btn)
-            range_row.addWidget(btn)
-            self._monitor_ranges[label] = seconds
-            if seconds == 3600:
-                btn.setChecked(True)
-        range_row.addStretch(1)
-        layout.addLayout(range_row)
 
-        scope_hint = QLabel("仅统计 Codex 实际请求记录；刷新不会主动发送探测请求。")
-        scope_hint.setProperty("class", "muted")
-        scope_hint.setWordWrap(True)
-        self._monitor_scope_hint = scope_hint
-        layout.addWidget(scope_hint)
 
-        # Token usage gauges
-        token_panel = GlassPanel()
-        token_layout = QVBoxLayout(token_panel)
-        token_layout.setContentsMargins(16, 13, 16, 13)
-        token_header = QHBoxLayout()
-        token_header.addWidget(self._section_title("供应商 Token 使用量"))
-        token_header.addStretch(1)
-        self._token_range_group = QButtonGroup(self)
-        self._token_range_group.setExclusive(True)
-        token_ranges = (
-            ("15m", 15 * 60),
-            ("1h", 3600),
-            ("6h", 6 * 3600),
-            ("24h", 24 * 3600),
-            ("7d", 7 * 86400),
-            ("30d", 30 * 86400),
-        )
-        self._token_range_seconds: dict[str, float] = {}
-        for label, seconds in token_ranges:
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setFixedHeight(26)
-            btn.setProperty("class", "chip")
-            btn.clicked.connect(lambda checked=False: self._refresh_token_gauges())
-            self._token_range_group.addButton(btn)
-            token_header.addWidget(btn)
-            self._token_range_seconds[label] = seconds
-            if seconds == 86400:
-                btn.setChecked(True)
-        token_layout.addLayout(token_header)
-        self.token_gauges_grid = QHBoxLayout()
-        self.token_gauges_grid.setSpacing(10)
-        self._token_gauge_widgets: dict[str, TokenGaugeWidget] = {}
-        gauge_colors = {"openai": "#138a68", "relay1": "#1879b8", "relay2": "#c06a1b", "glm": "#7257b5", "deepseek": "#4866d5"}
-        for pid in PROFILE_IDS:
-            gauge = TokenGaugeWidget()
-            gauge.set_data("", 0, 0.0, gauge_colors[pid], 0)
-            self._token_gauge_widgets[pid] = gauge
-            self.token_gauges_grid.addWidget(gauge, 1)
-        token_layout.addLayout(self.token_gauges_grid)
-        layout.addWidget(token_panel)
 
-    def _monitor_stat_card(self, title: str, initial: str) -> GlassPanel:
-        panel = GlassPanel()
-        lay = QVBoxLayout(panel)
-        lay.setContentsMargins(16, 12, 16, 12)
-        label = QLabel(title)
-        label.setProperty("class", "muted")
-        value = QLabel(initial)
-        value.setProperty("class", "statValue")
-        lay.addWidget(label)
-        lay.addWidget(value)
-        panel._stat_value = value
-        return panel
 
-    def _set_monitor_stat(self, panel: GlassPanel, value: str) -> None:
-        panel._stat_value.setText(value)
 
-    def _refresh_monitor_page(self) -> None:
-        checked = self._monitor_range_group.checkedButton()
-        seconds = 3600.0
-        if checked is not None:
-            seconds = self._monitor_ranges.get(checked.text(), 3600.0)
-        self._run_job(
-            lambda: (
-                seconds,
-                self.controller.request_records(seconds),
-            ),
-            self._render_monitor_page,
-            lambda exc: self._set_monitor_scope_error(exc),
-        )
 
-    def _set_monitor_scope_error(self, exc: BaseException) -> None:
-        self._monitor_scope_hint.setText(f"读取请求记录失败：{exc}")
 
-    def _render_monitor_page(self, state: tuple[float, list[HealthRecord]]) -> None:
-        seconds, records = state
-        if records:
-            self._monitor_scope_hint.setText(
-                "每次只记录当时实际使用的供应商；当前时间范围内已有 "
-                f"{len(records)} 条检查记录。"
-            )
-        else:
-            self._monitor_scope_hint.setText(
-                "当前时间范围暂无检查记录；点击右上角刷新，或等待当前供应商完成首次检查。"
-            )
-        profile_ids = list(PROFILE_IDS)
-        summaries = self.monitor_history.summarize(records, profile_ids)
-        total_checks = sum(s.total_checks for s in summaries.values())
-        healthy_checks = sum(s.healthy_checks for s in summaries.values())
-        error_checks = sum(s.error_checks for s in summaries.values())
-        overall_avail = healthy_checks / total_checks * 100.0 if total_checks else None
-        # CCH-style average: total valid first-token latency divided by the
-        # number of requests, rather than averaging provider averages.
-        latencies = [
-            item.latency_ms
-            for item in records
-            if item.state == "healthy" and item.latency_ms is not None and item.latency_ms >= 0
-        ]
-        overall_latency = sum(latencies) / len(latencies) if latencies else None
-        overall_error = error_checks / total_checks * 100.0 if total_checks else None
-        active = sum(1 for s in summaries.values() if s.total_checks > 0)
-        self._set_monitor_stat(
-            self.monitor_availability_card,
-            f"{overall_avail:.1f}%" if overall_avail is not None else "--",
-        )
-        self._set_monitor_stat(
-            self.monitor_latency_card,
-            f"{overall_latency / 1000:,.2f} 秒" if overall_latency is not None else "--",
-        )
-        self._set_monitor_stat(
-            self.monitor_error_card,
-            f"{overall_error:.1f}%" if overall_error is not None else "--",
-        )
-        self._set_monitor_stat(self.monitor_providers_card, f"{active}/{len(profile_ids)}")
-
-        # The former per-provider availability bars were intentionally removed;
-        # the summary cards and request log remain the source of truth.
-
-    def _update_monitor_tokens(self, usage: dict[str, TokenUsage]) -> None:
-        self._latest_full_usage = usage
-        self._refresh_token_gauges()
-
-    def _refresh_token_gauges(self) -> None:
-        checked = self._token_range_group.checkedButton()
-        seconds = 86400.0
-        if checked is not None:
-            seconds = self._token_range_seconds.get(checked.text(), 86400.0)
-        def worker() -> dict[str, TokenUsage]:
-            return self.controller.token_usage_seconds(seconds)
-
-        def done(result: dict[str, TokenUsage] | BaseException) -> None:
-            if isinstance(result, BaseException):
-                return
-            usage = result
-            max_tokens = max((u.total_tokens for u in usage.values()), default=0)
-            colors = {"openai": "#138a68", "relay1": "#1879b8", "relay2": "#c06a1b", "glm": "#7257b5", "deepseek": "#4866d5"}
-            for pid in PROFILE_IDS:
-                profile = self.controller.settings.profiles.get(pid)
-                gauge = self._token_gauge_widgets.get(pid)
-                if profile is None or gauge is None:
-                    continue
-                item = usage.get(pid) or usage.get(profile.provider_key)
-                tokens = item.total_tokens if item else 0
-                sessions = item.sessions if item else 0
-                ratio = (tokens / max_tokens) if max_tokens > 0 else 0.0
-                gauge.set_data(profile.display_name, tokens, ratio, colors[pid], sessions)
-
-        self._run_job(worker, done)
 
     def _build_providers_page(self) -> None:
         page, layout = self._page(
@@ -1229,13 +945,16 @@ class ProviderSwitchWindow(QMainWindow):
         form.addRow("API Key", self.profile_secret)
         self.profile_quota = QLineEdit()
         self.profile_quota.setPlaceholderText("可选：额度 JSON 接口")
-        form.addRow("额度查询地址", self.profile_quota)
+        self.profile_quota_label = QLabel("额度查询地址")
+        form.addRow(self.profile_quota_label, self.profile_quota)
         self.profile_quota_remaining = QLineEdit()
         self.profile_quota_remaining.setPlaceholderText("例如 data.remaining")
-        form.addRow("剩余字段路径", self.profile_quota_remaining)
+        self.profile_quota_remaining_label = QLabel("剩余字段路径")
+        form.addRow(self.profile_quota_remaining_label, self.profile_quota_remaining)
         self.profile_quota_total = QLineEdit()
         self.profile_quota_total.setPlaceholderText("例如 data.total")
-        form.addRow("总量字段路径", self.profile_quota_total)
+        self.profile_quota_total_label = QLabel("总量字段路径")
+        form.addRow(self.profile_quota_total_label, self.profile_quota_total)
         self.profile_quota_org_label = QLabel("GLM 团队组织 ID")
         self.profile_quota_org = QLineEdit()
         self.profile_quota_org.setPlaceholderText("团队套餐选填，例如 org-xxxxxx")
@@ -1253,15 +972,19 @@ class ProviderSwitchWindow(QMainWindow):
         self.save_profile_button.clicked.connect(self.save_profile_form)
         self.test_profile_button = QPushButton("测试链路")
         self.test_profile_button.clicked.connect(self.test_selected_profile)
+        self.query_profile_button = QPushButton("仅查询额度")
+        self.query_profile_button.clicked.connect(lambda: self.query_provider_quota(self._selected_profile_id()))
         button_row = QHBoxLayout()
         button_row.addWidget(self.save_profile_button)
         button_row.addWidget(self.test_profile_button)
+        button_row.addWidget(self.query_profile_button)
         button_row.addStretch(1)
         form.addRow("", button_row)
         layout.addWidget(panel)
         note = QLabel(
             "中转默认自动探测 Sub2API /v1/usage 额度；也可填专用额度接口。"
             "GLM 团队套餐需同时填写组织 ID 和项目 ID；项目 ID 使用下划线格式 proj_xxxxxxx。"
+            "DeepSeek 官方地址自动使用 /user/balance 查询余额，无需填写字段路径；自定义网关需显式填写兼容余额接口。"
             "官方账号登录态只用于 OpenAI 直连；API1、API2、GLM、DeepSeek 的 API Key 独立管理。"
             "仅当 API 地址属于 aqyimin.chat 时启用 AP1 图像扩展；更换为其他 URL 后按 API2 的通用中转配置处理。"
             "GPT Image 2 本地生成命令仍需独立的 OPENAI_API_KEY。"
@@ -1280,6 +1003,15 @@ class ProviderSwitchWindow(QMainWindow):
             return
         profile_id = self._selected_profile_id()
         profile = self.controller.settings.profiles[profile_id]
+        is_deepseek = profile.kind == "deepseek"
+        self.profile_quota_label.setText("余额查询地址（选填）" if is_deepseek else "额度查询地址")
+        self.profile_quota.setPlaceholderText(
+            "官方默认：https://api.deepseek.com/user/balance" if is_deepseek else "可选：额度 JSON 接口"
+        )
+        self.query_profile_button.setText("仅查询余额" if is_deepseek else "仅查询额度")
+        for widget in (self.profile_quota_remaining_label, self.profile_quota_remaining,
+                       self.profile_quota_total_label, self.profile_quota_total):
+            widget.setVisible(not is_deepseek)
         self.profile_name.setText(profile.display_name)
         self.profile_key.setText(profile.provider_key)
         self.profile_url.setText(profile.base_url)
@@ -1322,6 +1054,7 @@ class ProviderSwitchWindow(QMainWindow):
         )
 
     def _handle_profile_saved(self, profile_id: str, display_name: str) -> None:
+        self._last_telemetry.pop(profile_id, None)
         index = self.profile_combo.findData(profile_id)
         if index >= 0:
             self.profile_combo.setItemText(index, display_name)
@@ -2004,7 +1737,7 @@ class ProviderSwitchWindow(QMainWindow):
             self.controller.settings.tray_health_notifications
         )
         self.tray_notifications_check.setEnabled(QSystemTrayIcon.isSystemTrayAvailable())
-        form.addRow("", self.tray_notifications_check)
+        self.tray_notifications_check.hide()
         self.monitor_spin = QSpinBox()
         self.monitor_spin.setRange(10, 3600)
         self.monitor_spin.setSuffix(" 秒")
@@ -2016,11 +1749,11 @@ class ProviderSwitchWindow(QMainWindow):
         self.lookback_spin.setRange(1, 3650)
         self.lookback_spin.setSuffix(" 天")
         self.lookback_spin.setValue(self.controller.settings.usage_lookback_days)
-        form.addRow("Token 统计窗口", self.lookback_spin)
-        monitor_note = QLabel("健康监控只检查当前实际使用的供应商：启动、切换完成或点击刷新时触发。")
+        self.lookback_spin.hide()
+        monitor_note = QLabel("监控模块已移除；只在手动点击时查询余额、额度或测试链路。")
         monitor_note.setProperty("class", "muted")
         monitor_note.setWordWrap(True)
-        form.addRow("监控策略", monitor_note)
+        form.addRow("操作方式", monitor_note)
         save_button = QPushButton("保存通用设置")
         save_button.setProperty("kind", "primary")
         self.save_general_button = save_button
@@ -2068,6 +1801,7 @@ class ProviderSwitchWindow(QMainWindow):
         )
 
     def _handle_general_settings_saved(self, config_path: str) -> None:
+        self._last_telemetry.clear()
         self.save_general_button.setEnabled(True)
         self._set_busy(False, "通用设置已保存")
         self.refresh_deployment_view()
@@ -2113,12 +1847,6 @@ class ProviderSwitchWindow(QMainWindow):
             self.load_config_from_disk()
         if page_id == "deployment":
             self.refresh_deployment_view()
-        if page_id == "monitoring":
-            # The application may have been opened with monitoring disabled
-            # (for example from a smoke test or tray hand-off).  Always load
-            # existing history when the page becomes visible, and perform a
-            # first on-demand probe when the selected window has no records.
-            self._refresh_monitor_page()
 
     def _set_footer(self, text: str) -> None:
         self.footer_status.setText(text)
@@ -2131,11 +1859,15 @@ class ProviderSwitchWindow(QMainWindow):
         if status:
             self._set_footer(status)
         self.refresh_button.setEnabled(self._busy_count == 0)
+        for name in ("save_profile_button", "test_profile_button", "query_profile_button"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.setEnabled(self._busy_count == 0)
         self._sync_auth_controls()
         if self._busy_count:
             self.active_header.set_tone("warning", "处理中")
         else:
-            self.active_header.set_tone("success", "监控在线")
+            self.active_header.set_tone("success", "就绪")
 
     def _run_job(
         self,
@@ -2168,7 +1900,7 @@ class ProviderSwitchWindow(QMainWindow):
         if self._local_refresh_in_progress:
             return
         self._local_refresh_in_progress = True
-        self._set_busy(True, "正在刷新配置与 Token")
+        self._set_busy(True, "正在刷新本地配置")
         self._run_job(
             self._collect_local_state,
             self._handle_local_state,
@@ -2181,7 +1913,7 @@ class ProviderSwitchWindow(QMainWindow):
         return (
             self.controller.current_snapshot(),
             self.controller.detect_active_profile() or "unknown",
-            self.controller.token_usage(),
+            {},
             self.controller.auth_status(),
         )
 
@@ -2191,7 +1923,7 @@ class ProviderSwitchWindow(QMainWindow):
     ) -> None:
         snapshot, active, usage, auth_status = state
         self._local_refresh_in_progress = False
-        self._set_busy(False, "配置与 Token 已刷新")
+        self._set_busy(False, "本地配置已刷新")
         try:
             self.cached_auth = auth_status
             self._sync_native_selection()
@@ -2199,9 +1931,6 @@ class ProviderSwitchWindow(QMainWindow):
             # auth snapshot. A completed local refresh must not leave the
             # direct-login action in the state for the previous snapshot.
             self._sync_auth_controls()
-            history_path = self.controller.codex_home / "codex-provider-switch" / "monitor-history"
-            if self.monitor_history.data_dir.resolve(strict=False) != history_path.resolve(strict=False):
-                self.monitor_history = MonitorHistory(history_path)
             self.dashboard_summary.setText(
                 f"当前路由：{active or 'unknown'}  ·  provider 标签：{snapshot.model_provider or '官方默认'}  ·  模型：{snapshot.model or 'Codex 默认'}"
             )
@@ -2236,11 +1965,14 @@ class ProviderSwitchWindow(QMainWindow):
                         active=is_active,
                         unavailable_text="未配置",
                     )
+                card.quota_button.setEnabled(self.controller.quota_ready(profile_id))
+                cached_query = self._last_telemetry.get(profile_id)
+                if cached_query is not None and (cached_query.balance_checked_at or cached_query.quota):
+                    card.set_telemetry(cached_query)
             self._update_openai_availability()
             cached = self._last_telemetry.get(active) if self._telemetry_active_id == active else None
             if cached is not None and active in self.provider_cards:
                 self.provider_cards[active].set_telemetry(cached)
-            self._update_usage(usage)
         except Exception as exc:
             self.dashboard_summary.setText(f"读取配置失败：{exc}")
 
@@ -2250,16 +1982,6 @@ class ProviderSwitchWindow(QMainWindow):
         self._sync_auth_controls()
         self.dashboard_summary.setText(f"读取配置失败：{exc}")
 
-    def _update_usage(self, usage: dict[str, TokenUsage]) -> None:
-        total = sum(item.total_tokens for item in usage.values())
-        self._latest_total_tokens = total
-        sessions = sum(item.sessions for item in usage.values())
-        days = self.controller.settings.usage_lookback_days
-        self.token_text.setText(f"近 {days} 天共 {_format_int(total)} tokens，{sessions} 个本地会话。")
-        for profile_id, card in self.provider_cards.items():
-            profile = self.controller.settings.profiles[profile_id]
-            item = usage.get(profile.provider_key) or usage.get(profile_id)
-            card.set_usage(item, days)
 
     def _update_openai_availability(self) -> None:
         available = self.controller.openai_available(self.cached_auth)
@@ -2276,115 +1998,27 @@ class ProviderSwitchWindow(QMainWindow):
         # the dashboard footer focused on actions instead of duplicating health.
 
     def refresh_monitoring(self) -> None:
-        if self._monitoring_in_progress:
-            return
-        self._monitoring_in_progress = True
-        self._busy_count += 1
-        self.refresh_button.setEnabled(False)
-        self.active_header.set_tone("warning", "读取请求记录")
-        self._run_job(
-            self._collect_monitoring,
-            self._handle_monitoring_snapshot,
-            self._handle_monitoring_error,
-        )
+        # Compatibility for older switch callbacks: refresh configuration only.
+        self.refresh_all(local_only=True)
 
-    def _collect_monitoring(
-        self,
-    ) -> tuple[str, dict[str, ProviderTelemetry], dict[str, TokenUsage]]:
-        active = self.controller.detect_active_profile() or "unknown"
-        # Health is derived from actual Codex request outcomes in local
-        # session logs. Refreshing this page must not send a synthetic probe.
-        return active, self.controller.request_health(), self.controller.token_usage()
 
-    def _handle_monitoring_snapshot(
-        self,
-        snapshot: tuple[str, dict[str, ProviderTelemetry], dict[str, TokenUsage]],
-    ) -> None:
-        active_id, telemetry, usage = snapshot
-        self._update_usage(usage)
-        self._update_monitor_tokens(usage)
-        self._handle_telemetry(telemetry, active_id)
 
-    def _handle_telemetry(
-        self,
-        telemetry: dict[str, ProviderTelemetry],
-        active_id: str | None = None,
-    ) -> None:
-        self._monitoring_in_progress = False
-        self._busy_count = max(0, self._busy_count - 1)
-        self.refresh_button.setEnabled(self._busy_count == 0)
-        self._sync_auth_controls()
-        if self._busy_count:
-            self.active_header.set_tone("warning", "处理中")
-        else:
-            self.active_header.set_tone("success", "请求监控在线")
-        if active_id is None:
-            try:
-                active_id = self.controller.detect_active_profile() or "unknown"
-            except Exception:
-                active_id = next(iter(telemetry), "unknown")
-        try:
-            current_id = self.controller.detect_active_profile() or "unknown"
-        except Exception:
-            current_id = active_id
-        if current_id != active_id:
-            # A switch completed while the network probe was in flight. Do
-            # not paint the old provider's result onto the new route.
-            self._last_telemetry = {}
-            self._telemetry_active_id = None
-            return
-        # Keep quota results for providers that are not currently active. The
-        # health part is still updated only for the current provider.
-        self._last_telemetry.update(telemetry)
-        self._telemetry_active_id = active_id
-        for profile_id, card in self.provider_cards.items():
-            is_active = profile_id == active_id
-            card.clear_telemetry(
-                active=is_active,
-                preserve_quota=profile_id in self._last_telemetry,
-            )
-            item = telemetry.get(profile_id) if is_active else None
-            if item is not None:
-                card.set_telemetry(item)
-            else:
-                profile = self.controller.settings.profiles[profile_id]
-                if profile_id == "openai":
-                    card.set_available(
-                        self.controller.openai_available(self.cached_auth),
-                        active=is_active,
-                    )
-                else:
-                    card.set_available(
-                        is_active or self.controller.profile_ready(profile_id),
-                        active=is_active,
-                        unavailable_text="未配置",
-                    )
-        bad = [
-            item.health.message
-            for item in telemetry.values()
-            if item.health.state in {"offline", "auth_error", "unconfigured", "unknown"}
-        ]
-        if bad:
-            self._set_footer("；".join(bad[:2]))
-        else:
-            active = self.controller.settings.profiles.get(active_id)
-            active_name = active.display_name if active is not None else active_id
-            self._set_footer(f"{active_name} 的请求健康记录已更新；监控不会主动发起探测。")
-        self._update_tray_status(telemetry, bad)
 
     def query_provider_quota(self, profile_id: str) -> None:
         """Run a quota-only request without changing the active route."""
         if getattr(self, "_quota_query_in_progress", False):
             return
         profile = self.controller.settings.profiles.get(profile_id)
+        noun = "余额" if profile is not None and profile.kind == "deepseek" else "额度"
         if profile is None or profile.kind == "official":
             QMessageBox.information(self, "额度查询", "OpenAI 官方订阅额度由 Codex 显示。")
             return
         if not self.controller.quota_ready(profile_id):
-            QMessageBox.information(self, "额度查询", f"请先为 {profile.display_name} 填写额度地址（或 API 地址）和 Key。")
+            QMessageBox.information(self, f"{noun}查询", f"请先保存 {profile.display_name} 的 Key 和查询地址；DeepSeek 官方 API 地址可自动识别余额接口。")
             return
         self._quota_query_in_progress = True
-        self._set_busy(True, f"正在查询 {profile.display_name} 额度")
+        self._quota_context = self._quota_identity(profile_id)
+        self._set_busy(True, f"正在查询 {profile.display_name} {noun}")
         self._run_job(
             lambda: self.controller.query_quota(profile_id),
             lambda result: self._handle_quota_query(profile_id, result),
@@ -2393,7 +2027,12 @@ class ProviderSwitchWindow(QMainWindow):
 
     def _handle_quota_query(self, profile_id: str, result: ProviderTelemetry) -> None:
         self._quota_query_in_progress = False
-        self._set_busy(False, "额度查询完成")
+        self._set_busy(False, "查询完成")
+        context = getattr(self, "_quota_context", None)
+        self._quota_context = None
+        if context is not None and context != self._quota_identity(profile_id):
+            self._set_footer("供应商配置已变化，请重新查询余额/额度。")
+            return
         self._last_telemetry[profile_id] = result
         card = self.provider_cards.get(profile_id)
         if card is not None:
@@ -2402,54 +2041,16 @@ class ProviderSwitchWindow(QMainWindow):
 
     def _handle_quota_query_error(self, profile_id: str, error: BaseException) -> None:
         self._quota_query_in_progress = False
-        self._set_busy(False, "额度查询失败")
-        self._set_footer(f"额度查询失败：{error}")
+        self._quota_context = None
+        self._set_busy(False, "查询失败")
+        self._set_footer("余额/额度查询失败，请检查网络与已保存的供应商配置。")
 
-    def _update_tray_status(
-        self,
-        telemetry: dict[str, ProviderTelemetry],
-        bad: list[str],
-    ) -> None:
-        if self.tray_icon is None:
-            return
-        try:
-            active_id = self.controller.detect_active_profile() or "unknown"
-        except Exception:
-            active_id = self.controller.settings.active_profile_id or "openai"
-        active = self.controller.settings.profiles.get(active_id)
-        active_name = active.display_name if active is not None else active_id
-        health = "链路正常" if not bad else f"{len(bad)} 个链路异常"
-        days = self.controller.settings.usage_lookback_days
-        self.tray_icon.setToolTip(
-            f"{APP_NAME}\n{active_name} · {health}\n"
-            f"近 {days} 天 {_format_int(self._latest_total_tokens)} tokens"
-        )
-        issues = tuple(sorted(item[:180] for item in bad))
-        previous = self._last_tray_issues
-        self._last_tray_issues = issues
-        if not self.controller.settings.tray_health_notifications:
-            return
-        if issues and issues != previous:
-            self.tray_icon.showMessage(
-                "供应商链路异常",
-                "\n".join(issues[:2]),
-                QSystemTrayIcon.MessageIcon.Warning,
-                6000,
-            )
-        elif previous and not issues:
-            self.tray_icon.showMessage(
-                "供应商链路已恢复",
-                "当前供应商已通过最近一次检查；其他供应商未主动探测。",
-                QSystemTrayIcon.MessageIcon.Information,
-                4500,
-            )
+    def _quota_identity(self, profile_id: str) -> tuple[Any, ...]:
+        profile = self.controller.settings.profiles[profile_id]
+        return (str(self.controller.codex_home), profile.base_url, profile.quota_url,
+                hash(self.controller.credentials.get(profile_id, "")))
 
-    def _handle_monitoring_error(self, exc: BaseException) -> None:
-        self._monitoring_in_progress = False
-        self._busy_count = max(0, self._busy_count - 1)
-        self.refresh_button.setEnabled(self._busy_count == 0)
-        self._sync_auth_controls()
-        self._set_footer(f"监控失败：{exc}")
+
 
     def confirm_switch(self, profile_id: str) -> None:
         if profile_id == "openai" and not self.controller.openai_available(self.cached_auth):
@@ -3134,7 +2735,7 @@ def run_qt_smoke_test(controller: ApplicationController | None = None) -> int:
     window = ProviderSwitchWindow(controller, start_monitor=False, show_wizard=False)
     window.show()
     app.processEvents()
-    if APP_VERSION not in window.windowTitle() or len(window.pages) != 7:
+    if APP_VERSION not in window.windowTitle() or len(window.pages) != 6 or "monitoring" in window.pages:
         window.exit_application()
         raise RuntimeError("Qt UI smoke test failed")
     window.exit_application()

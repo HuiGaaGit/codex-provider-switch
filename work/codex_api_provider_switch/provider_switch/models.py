@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from .constants import (
@@ -204,11 +205,22 @@ class QuotaWindow:
 
 
 @dataclass(slots=True)
+class AccountBalance:
+    currency: str
+    total_balance: Decimal
+    granted_balance: Decimal
+    topped_up_balance: Decimal
+
+
+@dataclass(slots=True)
 class ProviderTelemetry:
     profile_id: str
     health: HealthResult
     quota: list[QuotaWindow] = field(default_factory=list)
     quota_message: str = ""
+    balances: list[AccountBalance] = field(default_factory=list)
+    balance_available: bool | None = None
+    balance_checked_at: str = ""
 
 
 @dataclass(slots=True)

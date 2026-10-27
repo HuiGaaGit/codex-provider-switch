@@ -1,18 +1,20 @@
 # 11CodexAPI供应商开关
 
-Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、API1、API2 与可选的 GLM / DeepSeek 之间切换，并集中完成历史会话同步、链路健康、额度查询和本机 Token 统计。
+Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连、API1、API2 与可选的 GLM / DeepSeek 之间切换，提供历史会话兼容、配置调整、官方登录管理与手动余额/额度查询。
 
-当前交付版本：`1.3.11`
+当前交付版本：`1.3.12`。本版增加 DeepSeek 余额查询，并按需移除监控模块与后台扫描。
 
-## 下载 1.3.11
+## 下载 1.3.12
 
-- [Windows x64 安装包（推荐）](https://github.com/HuiGaaGit/codex-provider-switch/releases/download/v1.3.11/Codex-Provider-Switch-Setup-1.3.11.exe)
-- [Windows x64 便携版](https://github.com/HuiGaaGit/codex-provider-switch/releases/download/v1.3.11/Codex-Provider-Switch-1.3.11.exe)
-- [发布页面](https://github.com/HuiGaaGit/codex-provider-switch/releases/tag/v1.3.11) · [更新说明与校验值](docs/releases/v1.3.11.md)
+- [Windows x64 安装包（推荐）](https://github.com/HuiGaaGit/codex-provider-switch/releases/download/v1.3.12/Codex-Provider-Switch-Setup-1.3.12.exe)
+- [Windows x64 便携版](https://github.com/HuiGaaGit/codex-provider-switch/releases/download/v1.3.12/Codex-Provider-Switch-1.3.12.exe)
+- [发布页面](https://github.com/HuiGaaGit/codex-provider-switch/releases/tag/v1.3.12) · [更新说明与校验值](docs/releases/v1.3.12.md) · [历史版本](https://github.com/HuiGaaGit/codex-provider-switch/releases)
 
 安装包不包含任何用户 Key 或官方账号凭据。在原 Windows 用户下升级并沿用原 Codex Home，可继续使用已保存的供应商档案；换电脑需要重新填写 Key。
 
 ## 本次更新
+
+1.3.12 增加 DeepSeek 官方余额查询，显示币种、可用总余额、赠送余额和充值余额；总览“查余额”和供应商配置“仅查询余额”均可使用，不需要先切换到 DeepSeek 或选择模型。移除监控模块、Token 仪表盘、总览监控统计及自动扫描；保留托盘驻留、手动链路测试和其他供应商额度查询。详见 [1.3.12 交付说明](docs/releases/v1.3.12.md)。
 
 1.3.11 增加 DeepSeek 官方 Responses 接入。总览第四个入口通过“模型 API”选择 GLM 或 DeepSeek；选择只改变展示档案，点击卡片上的“切换”才应用配置。旧 GLM 的地址、模型、加密 Key 和团队额度设置保留，两者可以分别配置。
 
@@ -22,12 +24,12 @@ Windows 桌面工具，用一个稳定的 Codex provider 标签在 OpenAI 直连
 - DeepSeek 与 GLM 的模型目录分别为当前 Codex Home 下的 `models-deepseek.json`、`models-glm.json`。“配置预览及调整”中通过供应商选择器独立读取、恢复内置、编辑和保存，切换目录时提示处理未保存内容。
 - DeepSeek 使用 `wire_api = "responses"`、自身 bearer Key 和 `requires_openai_auth = false`；默认推理 `high`，禁用内置搜索，清理中转 Fast mode 和 AP1 图像扩展字段。官方账号登录凭据保持独立。
 - DeepSeek 所需的 API 登录偏好、搜索、原始推理显示和桌面推理档位会先做非敏感快照；切到 GLM、API1、API2 或官方直连时恢复原值，避免登录方式或搜索设置残留。
-- 健康与 Token 统计继续读取实际 Codex 请求，不定时探测所有供应商。DeepSeek 默认不查询中转 `/v1/usage`，不显示按量金额；未配置套餐额度接口时不提供额度按钮。
+- DeepSeek 使用官方 `/user/balance` 查询账户余额，不调用中转 `/v1/usage`，不推算套餐百分比、消费金额或 Token 账单。监控模块已在 1.3.12 移除。
 - 旧设置自动补充 DeepSeek 档案，不复制 GLM Key。原生 DeepSeek 配置导入时只归入 DeepSeek，避免其 Key 被误存为 API1。
 
 官方依据：[Codex 接入](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/)、[Responses API](https://api-docs.deepseek.com/zh-cn/guides/responses_api/)、[模型元数据](https://api-docs.deepseek.com/zh-cn/api/list-models/)。模型目录能力按 2026-10-21 文档整理；Pro 不声明图片输入。
 
-本版本已通过本地回归及真实 Codex 离线配置加载验证。未提供 DeepSeek Key，因此未进行真实推理和计费请求测试。
+DeepSeek 模型接入在 1.3.11 已通过真实 Codex 离线配置加载验证；1.3.12 的余额解析、HTTP Bearer 请求和路由不变性已在隔离环境验证。本机没有已保存的 DeepSeek 官方 Key，未实测真实账户余额或真实推理请求。
 
 DeepSeek 配置步骤：
 
@@ -50,7 +52,7 @@ DeepSeek 配置步骤：
 3. 检测 OpenAI 官方登录态，选择是否保留它供后续 OpenAI 直连使用；API1、API2、GLM、DeepSeek 使用各自的 API Key。确认稳定 provider 标签，按选择注入 `models-glm.json` 或 `models-deepseek.json`，并检测或一键安装 Codex Threadripper。
 4. 选择首次启用的供应商，备份并写入配置。
 
-完成部署后默认进入总览，保留 OpenAI、API1、API2 和可选 GLM / DeepSeek 共四个切换入口，以及健康、额度、Token 摘要。供应商详情、模型目录、Threadripper、官方登录态与高级设置分别位于独立功能区。关闭主窗口时默认缩入 Windows 系统托盘；健康监控读取 Codex 实际请求记录，刷新不会主动发起模型请求或定时探测各供应商。托盘菜单可恢复窗口、立即刷新或彻底退出。Windows 优先使用 PySide6 液态毛玻璃界面，缺少 Qt 运行库时回退到 Tk 界面。
+完成部署后默认进入总览，保留 OpenAI、API1、API2 和可选 GLM / DeepSeek 共四个切换入口，以及手动余额/额度查询。供应商详情、模型目录、Threadripper、官方登录态与高级设置分别位于独立功能区。关闭主窗口时默认缩入 Windows 系统托盘，但不再后台监控或扫描会话日志；“刷新配置”只读取配置及登录态，余额/额度需单独点击查询。Windows 优先使用 PySide6 液态毛玻璃界面，缺少 Qt 运行库时回退到 Tk 界面。
 
 ## 切换与历史兼容
 
@@ -103,19 +105,19 @@ experimental_bearer_token = "<本机保存的 Key>"
 
 “一键安装 / 更新”会从 `Wangnov/codex-threadripper` 的最新官方 GitHub Release 下载 Windows x64 ZIP，下载对应 `.sha256` 后校验，校验通过才安装到 `%LOCALAPPDATA%\CodexProviderSwitch\tools\`。程序也兼容 npm/PATH 中已有的安装。
 
-## 健康与用量
+## 余额与额度查询
 
-- 健康监控：读取当前供应商的 Codex 实际请求记录，显示可用率、错误率及平均首响应时间（秒）；没有记录时不把主动探测结果当成实际请求。启动、切换及刷新界面均不会定时探测全部供应商。
+- DeepSeek：使用自己的 Bearer Key 查询 [GET /user/balance](https://api-docs.deepseek.com/api/get-user-balance/)。显示 CNY / USD 各自的可用总余额、赠送余额、充值余额及查询时间，金额使用千分位和两位小数，不合并不同币种、不伪造剩余百分比。
+- 默认仅对 `https://api.deepseek.com`（兼容其 `/v1` 基址）自动使用官方余额地址；自定义 API 地址必须显式填写兼容的余额接口，避免把中转 Key 自动发送给官方。1.3.11 已保存的官方 DeepSeek 档案无需重新部署。
+- 总览“查余额”与供应商配置“仅查询余额”均只读取已保存凭据，不写 `config.toml` 或 `auth.json`，不切换、不重启、不调用模型。未启用 DeepSeek 或尚未选择模型时仍可查余额。零余额、认证失败、限流、空响应和网络异常分别处理，失败不会显示“余额已更新”。
 - OpenAI 直连：官方登录检查通过 `codex login status` 单独执行；只有 ChatGPT/官方账号凭据会解锁直连按钮，API Key 不作为官方账号登录态。
-- API1 / API2 / DeepSeek：手动连通性检查使用对应 Key 请求兼容 `/models`，与实际请求监控、仅查询额度操作分开。
+- API1 / API2 / DeepSeek：手动连通性检查使用对应 Key 请求兼容 `/models`，与余额/额度查询分开；查询余额成功不代表模型链路健康。
 - GLM：额度查询使用 Coding Plan 配额接口；个人套餐留空组织/项目 ID，团队套餐必须同时填写 `org-...` 和 `proj-...`，软件会自动改用团队额度请求。
-- GLM Coding Plan Key 可显示 5 小时和周额度及重置时间。普通按量 Key 可以正常调用模型，但官方接口会返回“不存在 Coding Plan”，此时只显示链路健康，不伪造剩余额度。
+- GLM Coding Plan Key 可显示 5 小时和周额度及重置时间。普通按量 Key 可能返回“不存在 Coding Plan”，此时明确提示不支持，不伪造剩余额度。
 - API2 / Sub2API 网关默认自动请求 `/v1/usage?days=30`；接口只返回钱包余额、没有套餐总量时不显示无意义的剩余金额，界面会明确提示无法计算百分比。其它中转可在供应商页配置专用额度 URL 与 JSON 字段路径。API1 当前网关未开放可用的 Key 级额度接口，软件会明确提示，而不是伪造数值。
 - 供应商卡片的“查额度”只查询已保存 Key 的额度接口，不切换当前供应商，也不发起模型链路探测；API1/API2 会查询配置的 `/v1/usage?days=30`，未使用中的 GLM 也可以单独查询并保留结果。
-- Token 统计扫描当前 Codex Home 的会话与归档 JSONL，按每条累计 `token_count` 的增量、事件时间和供应商切换记录归属用量，支持选择时间范围，默认近 30 天。缓存输入属于输入 Token，不重复加到总量；界面统一以 M（1 M = 1,000,000 tokens）和千分位显示。此统计是本机日志用量，不是供应商账单或余额。
-- 系统托盘提示当前供应商、链路状态和统计窗口内的 Token 总量；仅在异常发生变化或全部恢复时通知，不会每轮监控重复弹窗。
+- 监控功能区、Token 仪表盘及总览统计已移除，不再自动扫描会话、收集请求健康或发送监控通知；历史日志、供应商档案、Key 和原有配置仍保留。
 - 主窗口右下角只显示操作状态，不再显示 `config.toml` 路径。
-- 监控页不再显示供应商可用性时间线或监控条区域，只保留基于实际请求记录的健康摘要、平均首响应时间、错误率和 Token 仪表盘。
 
 ## 本地数据与安全
 
@@ -129,17 +131,17 @@ experimental_bearer_token = "<本机保存的 Key>"
 ## 源码结构
 
 - `work/codex_api_provider_switch/codex_api_provider_switch.py`：兼容入口、版本与冒烟命令。
-- `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、监控、进程与 UI 模块。
+- `work/codex_api_provider_switch/provider_switch/`：配置、设置、模型目录、Threadripper、余额/额度、进程与 UI 模块。
 - `work/codex_api_provider_switch/assets/models.json`：内置 GLM 模型目录。
 - `work/codex_api_provider_switch/assets/models-deepseek.json`：内置 DeepSeek 模型目录。
-- `work/codex_api_provider_switch/Codex Provider Switch-1.3.11.spec`：PyInstaller 交付配置。
-- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.11.iss`：免管理员权限的 Inno Setup 安装器配置。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.11.exe`：可运行交付物。
-- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.11.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘监控。
+- `work/codex_api_provider_switch/Codex Provider Switch-1.3.12.spec`：PyInstaller 交付配置。
+- `work/codex_api_provider_switch/installer/Codex Provider Switch-1.3.12.iss`：免管理员权限的 Inno Setup 安装器配置。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-1.3.12.exe`：可运行交付物。
+- `outputs/codex_api_provider_switch/Codex Provider Switch-Setup-1.3.12.exe`：推荐的 Windows 安装包，可选桌面快捷方式和开机托盘驻留。
 
 ## 验证与打包
 
-1.3.11 已通过 104 项测试、Qt/托盘与 Tk 向导冒烟、真实 Codex 离线配置加载及安装/卸载检查。验证均使用隔离临时目录；未取得真实 DeepSeek Key，未验证真实推理请求。详细范围与产物 SHA-256 见[发布说明](docs/releases/v1.3.11.md)。
+1.3.12 已通过 116 项测试、源码编译、Qt/托盘与 Tk 向导冒烟，以及余额界面的默认/小窗口截图检查。测试使用临时 Home、模拟响应和本机 HTTP 服务；未取得真实 DeepSeek Key，未实测真实账户余额。安装验证使用独立 AppId 和程序名，不关闭本机已运行的旧版本。详细范围与产物 SHA-256 见[交付说明](docs/releases/v1.3.12.md)。
 
 在 `work\codex_api_provider_switch` 下运行：
 
@@ -148,16 +150,16 @@ python -m unittest discover -s tests -v
 python -m compileall -q codex_api_provider_switch.py provider_switch tests
 python codex_api_provider_switch.py --smoke-test
 python codex_api_provider_switch.py --tray-smoke-test
-python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.11.spec"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.11.iss"
+python -m PyInstaller --noconfirm --distpath ..\..\outputs\codex_api_provider_switch "Codex Provider Switch-1.3.12.spec"
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp "installer\Codex Provider Switch-1.3.12.iss"
 ```
 
 打包后验证：
 
 ```powershell
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.11.exe" --version
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.11.exe" --smoke-test
-& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.11.exe" --tray-smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.12.exe" --version
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.12.exe" --smoke-test
+& "..\..\outputs\codex_api_provider_switch\Codex Provider Switch-1.3.12.exe" --tray-smoke-test
 .\installer\verify_install.ps1
 ```
 

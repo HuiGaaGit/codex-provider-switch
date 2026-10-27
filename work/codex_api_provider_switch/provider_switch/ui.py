@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 from .auth_manager import AuthStatus, CodexAuthError
+from .balances import format_balance_summary
 from .catalog import CatalogError, resource_path, validate_catalog_text
 from .config_manager import ConfigManager, ConfigSnapshot, discover_codex_homes
 from .constants import APP_NAME, APP_VERSION, COLORS, NATIVE_PROFILE_IDS, PROFILE_IDS
@@ -75,11 +76,12 @@ class ProviderCard(tk.Frame):
         profile_id: str,
         profile: ProviderProfile,
         on_switch: Callable[[str], None],
+        on_quota: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(
             parent,
             width=390,
-            height=188,
+            height=218,
             background=COLORS["surface"],
             highlightbackground=COLORS["border"],
             highlightthickness=1,
@@ -130,15 +132,15 @@ class ProviderCard(tk.Frame):
             foreground=COLORS["muted"],
             font=(FONT, 9),
             anchor="w",
+            justify="left",
+            wraplength=330,
         ).grid(row=2, column=1, columnspan=2, sticky="ew", padx=(16, 14), pady=1)
-        tk.Label(
-            self,
-            textvariable=self.usage_var,
-            background=COLORS["surface"],
-            foreground=COLORS["muted"],
-            font=(FONT, 9),
-            anchor="w",
-        ).grid(row=3, column=1, sticky="ew", padx=(16, 8), pady=(1, 12))
+        self.quota_button = make_button(
+            self, "查余额" if profile.kind == "deepseek" else "查额度",
+            lambda: on_quota(self.profile_id) if on_quota else None,
+        )
+        if profile.kind != "official":
+            self.quota_button.grid(row=3, column=1, sticky="w", padx=(16, 8), pady=(1, 12))
         self.switch_button = make_button(
             self, "切换", lambda: on_switch(self.profile_id), primary=True, width=7
         )
@@ -175,13 +177,17 @@ class ProviderCard(tk.Frame):
         )
 
     def clear_telemetry(self, *, active: bool = False) -> None:
-        self.health_var.set("等待当前供应商检查" if active else "尚未检查（仅检查当前供应商）")
-        self.quota_var.set("额度：尚未检查")
+        self.health_var.set("当前使用的路由" if active else "已保存，待切换")
+        self.quota_var.set("余额：尚未查询" if self.profile_id == "deepseek" else "额度：尚未查询")
 
     def set_telemetry(self, telemetry: ProviderTelemetry | None) -> None:
         if telemetry is None:
             self.health_var.set("尚未检查（仅检查当前供应商）")
             self.health_label.configure(foreground=COLORS["muted"])
+            return
+        if telemetry.balance_checked_at:
+            self.quota_var.set(format_balance_summary(telemetry, details=True))
+            self.configure(height=218 + max(0, len(telemetry.balances) - 1) * 40)
             return
         health = telemetry.health
         latency = f" · {health.latency_ms} ms" if health.latency_ms is not None else ""
@@ -252,7 +258,7 @@ class ProviderSwitchApp(tk.Tk):
         # Health probes are on-demand for the active provider. Keep the flag
         # only for backwards-compatible constructor callers; do not schedule
         # periodic fan-out checks.
-        self._monitor_enabled = start_monitor
+        self._monitor_enabled = False
         self._setup_styles()
         self._build_shell()
         self._build_dashboard()
@@ -264,8 +270,6 @@ class ProviderSwitchApp(tk.Tk):
         self.show_page("dashboard")
         self.refresh_all(local_only=True)
         self.after(100, self._drain_events)
-        if start_monitor:
-            self.after(700, self.refresh_monitoring)
         self.after(350, self.refresh_auth_status)
         if show_wizard and not self.controller.settings.setup_complete:
             self.after(250, self.open_setup_wizard)
@@ -423,7 +427,7 @@ class ProviderSwitchApp(tk.Tk):
 
     def _build_dashboard(self) -> None:
         page = self._new_page("dashboard")
-        header = self._page_header(page, "供应商总览", "一键切换、链路健康、额度与本机 Token 使用情况")
+        header = self._page_header(page, "供应商总览", "一键切换，按需查询供应商额度与 DeepSeek 余额")
         self.dashboard_refresh_button = make_button(header, "立即刷新", self.refresh_monitoring)
         self.dashboard_disconnect_button = make_button(
             header, "断开 API", self.confirm_disconnect_others, danger=True
@@ -473,6 +477,7 @@ class ProviderSwitchApp(tk.Tk):
                 profile_id,
                 self.controller.settings.profiles[profile_id],
                 self.confirm_switch,
+                self.query_provider_quota,
             )
             card.grid(
                 row=index // 2,
@@ -537,7 +542,7 @@ class ProviderSwitchApp(tk.Tk):
             ("base_url", "API Base URL", 1, 0),
             ("model", "默认模型", 1, 2),
             ("api_key", "API Key", 2, 0),
-            ("quota_url", "额度查询 URL", 3, 0),
+            ("quota_url", "余额/额度查询 URL", 3, 0),
             ("quota_remaining_path", "剩余额度字段路径", 4, 0),
             ("quota_total_path", "总额度字段路径", 4, 2),
             ("quota_organization_id", "GLM 团队组织 ID", 5, 0),
@@ -581,7 +586,7 @@ class ProviderSwitchApp(tk.Tk):
         self.provider_auth_check.pack(side="left", padx=(18, 0))
         ttk.Checkbutton(
             options,
-            text="启用监控",
+            text="启用供应商",
             variable=self.provider_form_vars["enabled"],
             style="App.TCheckbutton",
         ).pack(side="left", padx=(18, 0))
@@ -1247,7 +1252,6 @@ class ProviderSwitchApp(tk.Tk):
                 font=(FONT, 10),
             ).pack(anchor="w", pady=4)
         number_row = tk.Frame(form, background=COLORS["surface"])
-        number_row.grid(row=3, column=0, columnspan=3, sticky="w", pady=(12, 0))
         tk.Label(
             number_row,
             text="Token 统计天数",
@@ -1264,7 +1268,7 @@ class ProviderSwitchApp(tk.Tk):
         ).pack(side="left", padx=(8, 0))
         tk.Label(
             form,
-            text="健康监控只检查当前实际使用的供应商，在启动、切换完成或点击刷新时触发。",
+            text="监控模块已移除；余额、额度及链路测试仅在手动点击时查询。",
             background=COLORS["surface"],
             foreground=COLORS["muted"],
             font=(FONT, 9),
@@ -1351,9 +1355,7 @@ class ProviderSwitchApp(tk.Tk):
             self.active_route_var.set("配置不可用")
             self.route_detail_var.set(str(exc))
             return
-        if active_id != self.telemetry_active_id:
-            self.telemetry_data = {}
-            self.telemetry_active_id = active_id
+        self.telemetry_active_id = active_id
         active_profile = self.controller.settings.profiles.get(active_id)
         if hasattr(self, "native_profile_var"):
             selected = self.controller.settings.native_profile_id
@@ -1387,44 +1389,30 @@ class ProviderSwitchApp(tk.Tk):
                     active=is_active,
                     unavailable_text="未配置",
                 )
-            if is_active and active_id == self.telemetry_active_id:
-                card.set_telemetry(self.telemetry_data.get(profile_id))
-            usage_key = "openai" if profile_id == "openai" else provider_label
-            card.set_usage(
-                self.usage_data.get(usage_key),
-                self.controller.settings.usage_lookback_days,
-                profile_id == active_id,
-            )
+            card.quota_button.configure(state="normal" if self.controller.quota_ready(profile_id) else "disabled")
+            cached = self.telemetry_data.get(profile_id)
+            if cached is not None and (cached.balance_checked_at or cached.quota or is_active):
+                card.set_telemetry(cached)
             if profile_id in self.profile_tab_buttons:
                 self.profile_tab_buttons[profile_id].configure(text=profile.display_name)
-        if local_only and not getattr(self, "_usage_running", False):
-            self._usage_running = True
-
-            def usage_worker() -> None:
-                try:
-                    data = self.controller.token_usage()
-                    self.event_queue.put(("usage_data", data))
-                except Exception as exc:
-                    self.event_queue.put(("tool_log", f"Token 统计失败：{exc}"))
-
-            threading.Thread(target=usage_worker, daemon=True).start()
 
     def refresh_monitoring(self) -> None:
-        if getattr(self, "_monitor_running", False) or self.busy:
+        # Retain old callbacks without reading request logs or starting monitoring.
+        self.refresh_all(local_only=True)
+
+    def query_provider_quota(self, profile_id: str) -> None:
+        if self.busy:
             return
-        self._monitor_running = True
-        self.dashboard_refresh_button.configure(state="disabled", text="刷新中")
-        self.footer_var.set("正在读取当前供应商请求记录")
+        if not self.controller.quota_ready(profile_id):
+            messagebox.showinfo(APP_NAME, "请先保存查询地址和 Key；DeepSeek 官方地址会自动识别余额接口。", parent=self)
+            return
+        self._set_busy(True, "正在查询余额/额度")
 
         def worker() -> None:
             try:
-                active_id = self.controller.detect_active_profile() or "unknown"
-                telemetry = self.controller.request_health()
-                usage = self.controller.token_usage()
-                auth_status = self.controller.auth_status()
-                self.event_queue.put(("monitor_data", (active_id, telemetry, usage, auth_status)))
-            except Exception as exc:
-                self.event_queue.put(("monitor_failed", exc))
+                self.event_queue.put(("quota_done", self.controller.query_quota(profile_id)))
+            except Exception:
+                self.event_queue.put(("quota_failed", None))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1547,6 +1535,14 @@ class ProviderSwitchApp(tk.Tk):
                     self._set_busy(False)
                     self._append_tool_log(str(payload))
                     self.footer_var.set("历史会话同步完成")
+                elif event == "quota_done":
+                    self._set_busy(False)
+                    self.telemetry_data[payload.profile_id] = payload
+                    self.refresh_all(local_only=True)
+                    self.footer_var.set(payload.quota_message)
+                elif event == "quota_failed":
+                    self._set_busy(False)
+                    self.footer_var.set("余额/额度查询失败，请检查网络与已保存的供应商配置。")
                 elif event == "profile_test":
                     telemetry = payload  # type: ignore[assignment]
                     self.telemetry_data[telemetry.profile_id] = telemetry

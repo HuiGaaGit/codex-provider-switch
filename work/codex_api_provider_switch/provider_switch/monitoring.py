@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .auth_manager import AuthStatus, CodexAuthManager
+from .balances import BalanceError, deepseek_balance_url, parse_deepseek_balance
 from .constants import APP_VERSION
 from .models import (
     HealthResult,
@@ -205,6 +206,38 @@ def _relay_quota_url(profile: ProviderProfile) -> str:
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "/v1/usage", "days=30", ""))
 
 
+def _query_deepseek_balance(profile: ProviderProfile, api_key: str) -> ProviderTelemetry:
+    checked_at = _now_label()
+    result = ProviderTelemetry(
+        profile.profile_id,
+        HealthResult(profile.profile_id, "unknown", "仅查询余额，未测试模型链路"),
+        balance_checked_at=checked_at,
+    )
+    url = deepseek_balance_url(profile)
+    if not api_key.strip() or not url:
+        result.quota_message = "请保存 DeepSeek Key；自定义 API 地址需显式填写余额接口"
+        return result
+    try:
+        status, payload, _ = _http_json(url, api_key)
+        if status == 200:
+            result.balances, result.balance_available = parse_deepseek_balance(payload)
+            result.quota_message = (
+                "余额已更新" if result.balance_available else "余额已更新：余额不足，暂不可调用"
+            )
+        elif status in {401, 403}:
+            result.quota_message = "余额查询认证失败，请检查 DeepSeek API Key"
+        elif status == 429:
+            result.quota_message = "余额查询受限，请稍后重试"
+        else:
+            result.quota_message = f"余额查询失败：HTTP {status}"
+    except BalanceError as exc:
+        result.quota_message = str(exc)
+    except MonitoringError:
+        # Do not echo a URL, response body or exception which may contain a Key.
+        result.quota_message = "余额查询失败：网络异常或超时，请稍后重试"
+    return result
+
+
 def check_provider(
     profile: ProviderProfile,
     api_key: str = "",
@@ -220,6 +253,8 @@ def check_provider(
     if profile.kind == "official":
         health = _check_openai(codex_home, retain_official_auth, auth_status)
         return ProviderTelemetry(profile.profile_id, health, quota_message="订阅额度由 Codex 显示")
+    if profile.kind == "deepseek" and not probe_health:
+        return _query_deepseek_balance(profile, api_key)
     if not profile.base_url or not api_key:
         missing = "API 地址" if not profile.base_url else "API Key"
         health = HealthResult(profile.profile_id, "unconfigured", f"缺少{missing}", checked_at=_now_label())
@@ -271,7 +306,7 @@ def check_provider(
             quota_message = f"额度查询失败：{exc}"
 
     if not probe_health:
-        if profile.kind != "glm" and (profile.kind != "deepseek" or profile.quota_url):
+        if profile.kind not in {"glm", "deepseek"}:
             try:
                 quota_status, payload, _ = _http_json(_relay_quota_url(profile), api_key)
                 if quota_status == 200:
@@ -311,7 +346,7 @@ def check_provider(
     else:
         health = HealthResult(profile.profile_id, "offline", f"服务返回 HTTP {status}", latency, _now_label())
 
-    if profile.kind != "glm" and (profile.kind != "deepseek" or profile.quota_url):
+    if profile.kind not in {"glm", "deepseek"}:
         try:
             quota_status, payload, _ = _http_json(_relay_quota_url(profile), api_key)
             if quota_status == 200:

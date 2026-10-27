@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .auth_manager import AuthStatus, CodexAuthError, CodexAuthManager
+from .balances import deepseek_balance_url
 from .catalog import CatalogError, ModelCatalogManager, validate_catalog_text
 from .codex_process import CodexProcessController
 from .config_manager import ConfigError, ConfigManager, discover_codex_homes
@@ -225,8 +226,8 @@ class ApplicationController:
         profile = self.settings.profiles.get(profile_id)
         if profile is None or not profile.enabled or profile.kind == "official":
             return False
-        if profile.kind == "deepseek" and not profile.quota_url:
-            return False
+        if profile.kind == "deepseek":
+            return bool(deepseek_balance_url(profile) and self.credentials.get(profile_id, "").strip())
         return bool(
             self.credentials.get(profile_id, "").strip()
             and (profile.quota_url.strip() or profile.base_url.strip())

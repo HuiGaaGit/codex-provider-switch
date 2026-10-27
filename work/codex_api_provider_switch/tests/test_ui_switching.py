@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 import tempfile
 import unittest
 import time
@@ -14,7 +15,7 @@ try:
     from codex_api_provider_switch import build_demo_controller
     from provider_switch.auth_manager import AuthStatus
     from provider_switch.qt_ui import ProviderSwitchWindow
-    from provider_switch.monitor_history import HealthRecord
+    from provider_switch.models import AccountBalance, HealthResult, ProviderTelemetry
 except ImportError:  # pragma: no cover - exercised only on minimal Tk installs
     QApplication = None  # type: ignore[assignment]
     QPushButton = None  # type: ignore[assignment]
@@ -81,22 +82,65 @@ class QtSwitchEntryTests(unittest.TestCase):
         self.assertIn('"deepseek-flash"', self.window.catalog_editor.toPlainText())
         self.assertNotIn('"glm-5.3-flash"', self.window.catalog_editor.toPlainText())
 
-    def test_monitor_summary_counts_deepseek_requests(self) -> None:
-        self.window._render_monitor_page((3600, [HealthRecord(time.time(), "deepseek", "healthy", 150)]))
-        self.assertEqual("100.0%", self.window.monitor_availability_card._stat_value.text())
-        self.assertEqual("1/5", self.window.monitor_providers_card._stat_value.text())
+    def test_monitor_module_is_removed(self) -> None:
+        self.assertNotIn("monitoring", self.window.pages)
+        self.assertNotIn("monitoring", self.window.nav_buttons)
+        self.assertFalse(hasattr(self.window, "token_summary"))
+        self.assertFalse(hasattr(self.window, "monitor_history"))
+        self.assertFalse(hasattr(self.window, "_refresh_token_gauges"))
+        self.assertEqual(6, len(self.window.pages))
 
-    def test_monitor_page_has_no_availability_timeline(self) -> None:
-        """The monitoring page keeps request summaries without the old bar chart."""
-        self.assertFalse(hasattr(self.window, "_timeline_widget"))
-        self.assertFalse(hasattr(self.window, "_timeline_labels"))
-        self.assertNotIn("时间线", self.window._monitor_scope_hint.text())
+    def test_refresh_does_not_scan_requests_or_tokens(self) -> None:
+        self.controller.request_health = Mock(side_effect=AssertionError("monitor removed"))
+        self.controller.token_usage = Mock(side_effect=AssertionError("monitor removed"))
+        self.window._collect_local_state()
+        self.controller.request_health.assert_not_called()
+        self.controller.token_usage.assert_not_called()
 
     def test_config_editor_exposes_current_provider_default_button(self) -> None:
         labels = {button.text() for button in self.window.findChildren(QPushButton)}
         self.assertIn("恢复当前默认", labels)
         self.assertIn("登录并切换直连", labels)
         self.assertIn("断开其他 API 供应商", labels)
+
+    def test_deepseek_balance_survives_local_refresh_without_model_or_route_switch(self) -> None:
+        self.controller.credentials["deepseek"] = "local-test-key"
+        self.controller.settings.profiles["deepseek"].model = ""
+        state = self.window._collect_local_state()
+        self.window._handle_local_state(state)
+        card = self.window.provider_cards["deepseek"]
+        self.assertEqual("查余额", card.quota_button.text())
+        self.assertTrue(card.quota_button.isEnabled())
+        self.assertFalse(card.switch_button.isEnabled())
+        before_health = card.health.text()
+        result = ProviderTelemetry(
+            "deepseek", HealthResult("deepseek", "unknown", "仅查询余额"),
+            quota_message="余额已更新", balances=[AccountBalance(
+                "CNY", Decimal("1234.56"), Decimal("10.00"), Decimal("1224.56"))],
+            balance_available=True, balance_checked_at="12:30:00",
+        )
+        self.window._handle_quota_query("deepseek", result)
+        self.window._handle_local_state(state)
+        self.assertIn("CNY 1,234.56", card.quota_text.text())
+        self.assertIn("赠送 10.00 / 充值 1,224.56", card.quota_text.text())
+        self.assertEqual(before_health, card.health.text())
+        self.assertTrue(card.quota.isHidden())
+        self.assertEqual("relay1", self.controller.detect_active_profile())
+
+    def test_deepseek_form_has_native_balance_query_not_generic_json_paths(self) -> None:
+        self.window.profile_combo.setCurrentIndex(self.window.profile_combo.findData("deepseek"))
+        self.assertEqual("仅查询余额", self.window.query_profile_button.text())
+        self.assertIn("/user/balance", self.window.profile_quota.placeholderText())
+        self.assertTrue(self.window.profile_quota_total.isHidden())
+        self.assertTrue(self.window.profile_quota_remaining.isHidden())
+
+    def test_old_balance_response_is_discarded_after_key_changes(self) -> None:
+        self.window._quota_context = self.window._quota_identity("deepseek")
+        self.controller.credentials["deepseek"] = "new-local-test-key"
+        result = ProviderTelemetry("deepseek", HealthResult("deepseek", "unknown", ""))
+        self.window._handle_quota_query("deepseek", result)
+        self.assertNotIn("deepseek", self.window._last_telemetry)
+        self.assertIn("重新查询", self.window.footer_status.text())
 
     def test_direct_login_button_recovers_after_monitor_busy_state(self) -> None:
         self.controller.settings.retain_official_auth = False

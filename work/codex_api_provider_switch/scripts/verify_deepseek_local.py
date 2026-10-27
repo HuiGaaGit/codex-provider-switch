@@ -21,6 +21,7 @@ def main() -> None:
     parser.add_argument("--codex", type=Path)
     parser.add_argument("--preview-dir", type=Path)
     parser.add_argument("--tk-smoke", action="store_true")
+    parser.add_argument("--balance-demo", action="store_true")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="provider-switch-ds-audit-") as temporary:
         controller = build_demo_controller(Path(temporary))
@@ -85,8 +86,21 @@ def main() -> None:
                 window._drain_jobs()
             combo = window.native_profile_combo
             combo.setCurrentIndex(combo.findData("deepseek"))
+            if args.balance_demo:
+                from provider_switch.balances import parse_deepseek_balance
+                from provider_switch.models import HealthResult, ProviderTelemetry
+                balances, available = parse_deepseek_balance({
+                    "is_available": True, "balance_infos": [{"currency": "CNY",
+                        "total_balance": "1234.56", "granted_balance": "10.00",
+                        "topped_up_balance": "1224.56"}],
+                })
+                window._handle_quota_query("deepseek", ProviderTelemetry(
+                    "deepseek", HealthResult("deepseek", "unknown", "演示查询"),
+                    quota_message="演示余额，非真实账户", balances=balances,
+                    balance_available=available, balance_checked_at="12:30:00",
+                ))
             args.preview_dir.mkdir(parents=True, exist_ok=True)
-            for page in ("dashboard", "providers", "catalog", "monitoring"):
+            for page in ("dashboard", "providers", "catalog"):
                 window.show_page(page)
                 if page == "providers":
                     window.profile_combo.setCurrentIndex(window.profile_combo.findData("deepseek"))
@@ -94,6 +108,11 @@ def main() -> None:
                     window.catalog_profile_combo.setCurrentIndex(window.catalog_profile_combo.findData("deepseek"))
                 app.processEvents()
                 window.grab().save(str(args.preview_dir / f"deepseek-{page}.png"))
+                if page == "dashboard" and args.balance_demo:
+                    window.resize(900, 620)
+                    app.processEvents()
+                    window.grab().save(str(args.preview_dir / "deepseek-dashboard-small.png"))
+                    window.resize(1180, 850)
             wizard = SetupWizard(window)
             wizard.wizard_native_combo.setCurrentIndex(1)
             wizard._page_index = 1

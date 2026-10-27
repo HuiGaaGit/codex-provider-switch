@@ -117,7 +117,7 @@ class DeepSeekIntegrationTests(unittest.TestCase):
         self.assertEqual("healthy", result.health.state)
         self.assertEqual(1, request.call_count)
         self.assertEqual("https://api.deepseek.com/models", request.call_args.args[0])
-        self.assertFalse(self.controller.quota_ready("deepseek"))
+        self.assertTrue(self.controller.quota_ready("deepseek"))
 
     def test_old_settings_gain_deepseek_without_changing_glm(self) -> None:
         old = self.controller.settings.to_dict()

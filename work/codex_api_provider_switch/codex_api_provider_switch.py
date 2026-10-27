@@ -1,4 +1,4 @@
-"""Codex Provider Switch v1.3.11 entry point."""
+"""Codex Provider Switch v1.3.12 entry point."""
 
 from __future__ import annotations
 
